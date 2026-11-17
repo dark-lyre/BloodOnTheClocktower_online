@@ -1,10 +1,11 @@
 // 說書人的夜晚操作卡：和玩家輪到自己時的牌一樣，在圓桌中央「第 N 夜」下面（town.js 放置）；天亮前核對是 flow.js reviewCard
-import { h, ask, toast, prompt2, seatLabel } from './ui.js';
+import { h, ask, toast, prompt2, seatLabel, menu } from './ui.js';
 import { tr, getLang } from './lang.js';
 import { sel, startSelect, seatMenu } from './town.js';
 import { selectBar, selFrom, B, BW, PRETEND, stepOp, stepLock, cardTag, preShow } from './flow.js';
 import { showPages, bigRoles, bigNum, bigCore, bigWord, bigIs, bigBluffs, bluffSay } from './pass.js';
 import { ROLES } from './roles.js';
+import { rolePanel } from './rolepick.js';
 import { infoForm } from './infoform.js';
 import { stAbility, markMeaning } from './stside.js';
 import { seatBadge, mini, icon, named, w, tag, formula, ACTS, wakeMark, actorMark } from './glyph.js';
@@ -32,6 +33,7 @@ const head = (s, step, extra) => h('div', { class: 'ic-head' }, mini(step.roleId
 
 export function stepCard(ctx) {
   const s = ctx.state, step = s.st.step;
+  if (step.lunaticDraft) return lunaticDraftCard(ctx, step);
   // 線下：說書人當面叫醒他，他指給你看，你在桌上點（flow.js syncStPick 直接進入選人，不用先點「代為選擇」）
   if (sel.on && sel.on.key === step.id) {
     return selectBar(ctx, actorMark(s, step), (ids, role) => stepOp(ctx, 'pick', { ids, role }), !s.offline,
@@ -104,8 +106,48 @@ const sayTag = text => h('div', { class: 'ic-tag say' }, text);
 const isLine = (s, ids, k) => h('div', { class: 'frm-line ic-line is-line' }, ids.map(id => seatBadge(s, id, 'lg')), w('是', 'ink'), tag(k));
 // 偽裝：「偽裝」標籤 + 三張小牌
 const bluffRow = ids => h('div', { class: 'frm-line ic-line' }, tag('bluff'), ids.map(r => mini(r)));
+const apparentDemon = role => role && h('div', { class: 'frm-line ic-line' }, w('以為是', 'ink'), named(role));
 // 他看的爪牙、偽裝；有瘋子、提線木偶各再一行
 const toldRow = (s, l) => [l.minions?.length > 0 && isLine(s, l.minions, 'minion'), l.bluffs?.length > 0 && bluffRow(l.bluffs)];
+
+let lunaticEdit;
+const lunaticKey = (s, step) => {
+  const d = step.lunaticDraft;
+  return JSON.stringify([s.inst, step.id, d.seatId, d.fakeRole, !!d.sent, d.minions, d.bluffs, d.demons, d.roles]);
+};
+function lunaticDraftCard(ctx, step) {
+  const s = ctx.state, d = step.lunaticDraft, key = lunaticKey(s, step);
+  if (lunaticEdit?.key !== key) lunaticEdit = { key, fakeRole: d.fakeRole, minions: [...d.minions], bluffs: [...d.bluffs] };
+  const edit = lunaticEdit, { fakeRole, minions, bluffs } = edit;
+  // 換房間、切換身份、撤銷或另一端改了草稿後，舊面板和菜單不能再改這一份。
+  const live = () => {
+    const now = ctx.state, current = now?.st?.step;
+    return now?.isSt && !now.peek && now.phase === 'night' && current?.lunaticDraft && lunaticEdit === edit && lunaticKey(now, current) === key;
+  };
+  const active = () => live() && !d.sent;
+  const replace = (list, i, value) => { if (!active()) return; list[i] = value; ctx.render(); };
+  const selectDemon = () => active() && rolePanel({ key: `${key}:demon`, tab: tag('demon'), lead: w('選擇瘋子以為的惡魔'),
+    roles: d.demons, state: r => ({ on: r === edit.fakeRole }),
+    pick: r => { if (!active()) return; edit.fakeRole = r; ctx.render(); }, alive: active });
+  const selectSeat = (event, i) => active() && menu(event.currentTarget, '選擇假爪牙', s.seats
+    .filter(x => x.id !== d.seatId && (x.id === minions[i] || !minions.includes(x.id)))
+    .map(x => ({ label: seatLabel(s, x.id), onclick: () => replace(minions, i, x.id) })));
+  const selectBluff = i => active() && rolePanel({ key: `${key}:${i}`, tab: tag('bluff'), lead: w('選擇假偽裝'),
+    roles: d.roles.filter(r => r === bluffs[i] || !bluffs.includes(r)),
+    state: r => ({ on: r === bluffs[i], in: s.seats.some(x => x.role === r || x.fakeRole === r) }),
+    pick: r => replace(bluffs, i, r), alive: active });
+  const send = () => live() && stepOp(ctx, 'lunaticInfo', { stepId: step.id, fakeRole: edit.fakeRole, minions: [...minions], bluffs: [...bluffs] });
+  return h('div', { class: 'card focus infocard spread group luna' },
+    h('div', { class: 'ic-top' }, sayTag(d.sent ? '瘋子信息' : '發送前可點選並調整瘋子的假信息'), wakeMark(s, [d.seatId], mini('lunatic')),
+      d.sent || d.demons.length < 2 ? apparentDemon(fakeRole)
+        : h('div', { class: 'frm-line ic-line' }, w('以為是', 'ink'), B(named(fakeRole), selectDemon, 'sm ghost')),
+      minions.length > 0 && h('div', { class: 'frm-line ic-line' }, w('假爪牙', 'ink'),
+        minions.map((id, i) => d.sent ? seatBadge(s, id) : B(seatLabel(s, id), event => selectSeat(event, i), 'sm ghost'))),
+      bluffs.length > 0 && h('div', { class: 'frm-line ic-line' }, w('假偽裝', 'ink'),
+        bluffs.map((r, i) => d.sent ? named(r) : B(named(r), () => selectBluff(i), 'sm ghost')))),
+    h('div', { class: 'ic-foot' }, B(d.sent ? '繼續' : s.oneDevice ? '確認信息' : '確認發送', send, 'wide' + stepLock())));
+}
+
 function groupCard(ctx, step) {
   const s = ctx.state, one = s.oneDevice, next = () => stepOp(ctx, 'ack'), eye = fn => B([icon('eye'), '展示'], fn);
   const foot = show => h('div', { class: 'ic-foot' }, h('div', { class: 'row' }, one && show && eye(show), B('下一個', next, stepLock())));
@@ -123,7 +165,7 @@ function groupCard(ctx, step) {
     const l = step.lines[0];
     return h('div', { class: 'card focus infocard spread group luna' },
       h('div', { class: 'ic-top' }, sayTag(one ? '叫醒瘋子，當他是惡魔展示' : '叫醒瘋子，讓他看手機'), wakeMark(s, [l.seatId], mini('lunatic')),
-        h('span', { class: 'ink-stamp luna-fake' }, '假信息'), toldRow(s, l)),
+        h('span', { class: 'ink-stamp luna-fake' }, '假信息'), apparentDemon(l.fakeRole), toldRow(s, l)),
       foot(show));
   }
   // 惡魔：卡上是他要知道的（爪牙是誰、三張偽裝、瘋子 / 提線木偶是誰），叫醒的惡魔在角標上

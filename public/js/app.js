@@ -70,7 +70,8 @@ export const ctx = {
   act: (act, args = {}) => {
     // 說書人代入視角時只能看，不能替玩家操作
     if (ctx.state && ctx.state.peek) { toast('代入視角中只能查看'); return Promise.resolve({ ok: false }); }
-    return send('pl:act', { act, ...args });
+    const debug = ctx.state?.debug;
+    return send('pl:act', { act, ...args, ...(debug && { as: debug.as }) });
   },
   peek: seatId => send('st:peek', { seatId }),
   // 調試房間（測試服）：說書人換成某個座位的身份，null 換回說書人。點下去就收掉手上的東西，不等服務器回話（新狀態到了還會再收一次）
@@ -78,10 +79,7 @@ export const ctx = {
     const d = ctx.state?.debug;
     if (!d || (d.as || null) === (seatId || null)) return Promise.resolve({ ok: !!d });
     dropHands();
-    return send('dbg:as', { seatId: seatId || null }).then(r => {
-      if (r.ok && session) { if (seatId) LS.set(asKey(session.code), seatId); else LS.del(asKey(session.code)); }
-      return r;
-    });
+    return send('dbg:as', { seatId: seatId || null });
   },
   // 觀戰的人入座（準備階段有空位時）
   sit: () => session && joinPlayer(session.code, LS.get('botc.name') || '', session.inst, true),
@@ -314,6 +312,10 @@ function dropHands() {
 let stLog = [], heard = false; // heard：音效開始下了沒有
 sock.on('state', s => {
   if (s.custom) installScript(s.custom); // 上傳的劇本：先把角色登記好，後面畫什麼都查得到
+  if (s.debug) {
+    const key = asKey(s.code), as = s.debug.as || null;
+    if (as !== LS.get(key)) { if (as) LS.set(key, as); else LS.del(key); }
+  }
   const id = identOf(s);
   if (ident && ident !== id && ident.startsWith(s.code + '|')) dropHands();
   ident = id;
@@ -368,7 +370,8 @@ let clockTick = null;
 setInterval(() => {
   const n = ctx.state?.nomination, c = n?.clock, m = ctx.state?.mvpVote, f = ctx.state?.st?.step, v = ctx.state?.st?.virginCheck;
   const sec = t => Math.ceil((t - ctx.now()) / 1000);
-  const k = [c ? `${c.k}:${sec(c.at + c.step)}` : n?.deadline ? `t${n.paused ?? sec(n.deadline)}` : n?.paused != null ? `t${n.paused}` : '',
+  const count = c && (c.waiting && ctx.now() >= c.at ? 'wait' : sec(c.at + c.step));
+  const k = [c ? `${c.k}:${count}` : n?.deadline ? `t${n.paused ?? sec(n.deadline)}` : n?.paused != null ? `t${n.paused}` : '',
     m && !m.done ? `m${sec(m.closesAt)}` : '', f?.status === 'fake' ? `f${Math.floor(ctx.now() / 500)}` : '', v?.due ? `v${sec(v.due)}` : ''].join('|');
   if (k !== clockTick) { clockTick = k; if (k !== '|||') render(); }
 }, 200);

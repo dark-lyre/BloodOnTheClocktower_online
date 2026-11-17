@@ -52,7 +52,9 @@ export function clockState(ctx) {
   const c = ctx.state.nomination?.clock;
   if (!c) return null;
   const pending = !c.k && ctx.now() < c.at;
-  return { k: c.k, current: pending ? null : c.order[c.k] || null, done: c.k >= c.order.length, pending, left: pending ? c.step : Math.max(0, c.at + c.step - ctx.now()),
+  const waiting = !pending && !!c.waiting;
+  return { k: c.k, current: pending ? null : c.order[c.k] || null, done: c.k >= c.order.length, pending, waiting,
+    left: pending || waiting ? c.step : Math.max(0, c.at + c.step - ctx.now()),
     locked: id => c.order.indexOf(id) > -1 && c.order.indexOf(id) < c.k };
 }
 

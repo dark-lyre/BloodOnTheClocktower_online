@@ -97,24 +97,32 @@ const bad = (r, op, args) => assert.strictEqual(typeof st(r, op, args), 'string'
   console.log('單設備開局、代點、計票和撤銷 ✔');
 }
 
-// 單設備有瘋子：惡魔那一行之後是瘋子那一行（假爪牙、假偽裝），惡魔知道誰是瘋子
+// 單設備有瘋子：先確認假信息再展示，惡魔另有一張，知道誰是瘋子
 {
   const r = createRoom();
   ok(st(r, 'venue', { venue: 'offline', devices: 'one' }));
   ok(st(r, 'script', { scriptId: 'bmr' }));
   ok(st(r, 'addSeats', { names: '一 二 三 四 五 六 七'.split(' ') }));
   const roles = ['zombuul', 'godfather', 'lunatic', 'sailor', 'chambermaid', 'innkeeper', 'gambler'];
-  r.seats.forEach((s, i) => ok(st(r, 'setRole', { seatId: s.id, roleId: roles[i] })));
+  r.seats.forEach((s, i) => ok(st(r, 'setRole', { seatId: s.id, roleId: roles[i], fakeRole: roles[i] === 'lunatic' ? 'zombuul' : undefined })));
   ok(st(r, 'next'));
   const [demon, minion, luna] = r.seats;
+  const { id: stepId, lunaticDraft } = r.g.step;
+  assert.deepStrictEqual([r.g.step.roleId, lunaticDraft.seatId, lunaticDraft.fakeRole], ['lunainfo', luna.id, 'zombuul'], '先確定身份，再依序展示角色');
+  assert(!lunaticDraft.demons.includes('imp'), '只能選劇本上的惡魔');
+  const bluffs = ['sailor', 'innkeeper', 'goon']; // 可以選在場的善良角色
+  bad(r, 'lunaticInfo', { stepId, fakeRole: 'imp', minions: [demon.id], bluffs });
+  ok(st(r, 'lunaticInfo', { stepId, fakeRole: 'shabaloth', minions: [demon.id], bluffs }));
+  assert.strictEqual(luna.fakeRole, 'shabaloth');
   // 爪牙、瘋子、惡魔各自單獨叫醒：爪牙那一步只有爪牙（惡魔、瘋子都不睜眼）
   assert.deepStrictEqual([r.g.step.roleId, ...r.g.step.lines.map(l => [l.seatId, l.demon])], ['minioninfo', [minion.id, demon.id]], '只叫醒爪牙');
   ok(st(r, 'ack'));
   const [l] = r.g.step.lines;
   assert.deepStrictEqual([r.g.step.roleId, r.g.step.lines.length, l.seatId, l.lunatic], ['lunainfo', 1, luna.id, true], '瘋子在惡魔之前單獨叫醒');
+  assert.strictEqual(l.fakeRole, 'shabaloth', '展示的是已確認的惡魔');
   assert.strictEqual(l.minions.length, 1, '瘋子看到的假爪牙和真爪牙一樣多');
-  assert.ok(!l.minions.includes(luna.id));
-  assert.strictEqual(l.bluffs.length, 3, '瘋子也有三個偽裝');
+  assert.deepStrictEqual(l.minions, [demon.id]);
+  assert.deepStrictEqual(l.bluffs, bluffs);
   ok(st(r, 'ack'));
   const [d] = r.g.step.lines;
   assert.deepStrictEqual([r.g.step.roleId, r.g.step.lines.length, d.seatId, d.lunatic, d.luna], ['demoninfo', 1, demon.id, false, luna.id]);
@@ -139,8 +147,13 @@ const bad = (r, op, args) => assert.strictEqual(typeof st(r, op, args), 'string'
     const roles = ['zombuul', 'godfather', 'devilsadvocate', 'lunatic', 'sailor', 'chambermaid', 'innkeeper', 'gambler', 'gossip', 'exorcist'];
     r.seats.forEach((s, i) => ok(st(r, 'setRole', { seatId: s.id, roleId: roles[i] })));
     ok(st(r, 'next'));
-    for (let n = 0; r.g.step?.roleId !== 'lunainfo' && n < 3; n++) ok(st(r, 'ack'));
-    const luna = r.seats[3], f = r.chat.find(m => m.to === luna.id && m.src === 'demoninfo').f;
+    const luna = r.seats[3];
+    assert.ok(r.g.step.lunaticDraft);
+    assert.ok(!r.chat.some(m => m.to === luna.id && m.src === 'demoninfo'));
+    ok(st(r, 'ack'));
+    assert.strictEqual(r.g.step.roleId, 'minioninfo');
+    ok(st(r, 'ack'));
+    const f = r.chat.find(m => m.to === luna.id && m.src === 'demoninfo').f;
     const seats = f.filter(t => t.s).map(t => r.seats.findIndex(x => x.id === t.s));
     assert.strictEqual(seats.length, 2);
     assert.deepStrictEqual(seats, [...seats].sort((a, b) => a - b), '假爪牙按座位順序');

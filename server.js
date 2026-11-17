@@ -19,7 +19,7 @@ import { allow } from './lib/limit.js';
 import { guard } from './lib/util.js';
 import * as stats from './lib/stats.js';
 import { adminPage } from './lib/admin.js';
-import { DEBUG, isBot, renameBots, debugInfo, setPresence, botTick } from './lib/debug.js';
+import { DEBUG, isBot, renameBots, debugInfo, debugFocus, manualCount, setPresence, botTick } from './lib/debug.js';
 import { sweepAsks } from './lib/asks.js';
 
 const PORT = process.env.PORT || 3000;
@@ -119,12 +119,18 @@ function emitState(socket, room) {
   const reset = d.chatKey !== key;
   // 流程日誌也只推新增的；換了一局（日誌變短）從頭發
   const logN = room.g?.log?.length || 0, logFrom = reset || (d.logN || 0) > logN ? 0 : d.logN || 0;
-  const v = viewOf(room, d, reset ? 0 : d.chatSeq || 0, logFrom);
+  let v = viewOf(room, d, reset ? 0 : d.chatSeq || 0, logFrom);
+  // 同一座位的陣營 / 角色可能改變。重新發送當下可看的聊天，讓客戶端移除退出的群聊。
+  const groups = v.chatGroups.map(g => g.id).join(',');
+  const groupReset = groups !== d.chatGroups;
+  if (groupReset && !reset) v = viewOf(room, d, 0, logFrom);
+  if (DEBUG && manualCount(room)) v.nomination = { ...v.nomination, clock: { ...v.nomination.clock, waiting: true } };
   d.logN = logN;
-  v.chatReset = reset;
+  v.chatReset = reset || groupReset;
   // 上傳的劇本只發一次：剛連上、或換了一本
   if (room.script && d.scriptVer !== room.script.ver) { v.custom = scriptPayload(room.script); d.scriptVer = room.script.ver; }
   d.chatKey = key;
+  d.chatGroups = groups;
   d.chatSeq = room.chatSeq || 0;
   socket.emit('state', v);
 }
@@ -142,12 +148,27 @@ function dropOrphans(room, list) {
   });
 }
 
+// 只讓一個說書人連接跟隨流程。手動切換身份後留在該身份，直到下一個待操作步驟。
+function followDebug(room, list) {
+  if (!DEBUG || !room.debug) return;
+  const driver = list.find(s => s.data.st && !s.data.peek);
+  if (!driver) return;
+  const d = driver.data, target = debugFocus(room);
+  const key = target ? `${target.key}:${target.seatId || 'st'}` : null;
+  if (d.debugFocus === key) return;
+  if (target) d.as = target.seatId;
+  else if (room.phase === 'lobby' && d.debugFocus) d.as = null;
+  d.debugFocus = key;
+}
+
 // 刷新在線狀態後，把每個人各自能看到的狀態推過去
 function broadcast(room) {
   if (store.get(room.code) !== room) return; // 房間已解散 / 被騰掉：延遲觸發的計時器不再推送
   const list = dropOrphans(room, socketsOf(room.code));
   const online = new Set(list.map(s => s.data.pid).filter(Boolean));
   room.stOnline = list.some(s => s.data.st);
+  guard(sweepAsks)(room); // 計時器推進後，作廢不再成立的玩家請求，再判斷下一步操作
+  followDebug(room, list);
   // 調試：說書人代入的座位算在場（他在替這個座位操作），機器人一直在場；機器人跟著座位號改名
   const drive = list.map(s => asSeat(room, s.data)?.id).filter(Boolean);
   setPresence(room, drive, list.some(s => s.data.st && !asSeat(room, s.data)));
@@ -156,13 +177,12 @@ function broadcast(room) {
   room.watchers = [...new Map(list.filter(s => s.data.watch).map(s => [s.data.pid, { pid: s.data.pid, name: s.data.name }])).values()];
   for (const seat of room.seats) seat.online = !!seat.local || online.has(seat.pid) || isBot(seat) || drive.includes(seat.id); // 線下座位沒有手機，一直算在場
   guard(stats.observe)(room); // 統計出錯不能耽誤推送
-  guard(sweepAsks)(room); // 計時器推進了局面（貞潔者反噬、代班說書人裁定……）：不再成立的玩家請求作廢（lib/asks.js）
   // 一個連接的狀態出錯不能拖累同房間的其他人，更不能帶走整個進程
   for (const s of list) {
     try { emitState(s, room); } catch (e) { console.error('推送狀態出錯', room.code, e); }
   }
   store.save(room);
-  countTick(room, broadcast);
+  countTick(room, broadcast, DEBUG && manualCount(room));
   virginTick(room, broadcast);
   mvpTick(room, broadcast);
   pretendTick(room, broadcast);
@@ -293,7 +313,9 @@ io.on('connection', socket => {
 
   socket.on('pl:act', handle((act, cb) => {
     const room = store.get(socket.data.code);
-    const pid = socket.data.pid || (room && asSeat(room, socket.data)?.pid); // 調試：說書人替他換成的那個座位操作
+    const seat = room && asSeat(room, socket.data);
+    if (socket.data.st && Object.hasOwn(act, 'as') && act.as !== (seat?.id || null)) return reply(cb, '身份已切換，請重新操作');
+    const pid = socket.data.pid || seat?.pid; // 調試：說書人替他換成的那個座位操作
     if (!room || !pid) return reply(cb, '未加入房間');
     if (act.act === 'chat' && !allow(`chat:${room.code}:${pid}`, LIMIT.chat)) return reply(cb, SLOW);
     const err = applyPlayerAction(room, pid, act);

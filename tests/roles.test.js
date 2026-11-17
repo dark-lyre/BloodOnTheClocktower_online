@@ -205,6 +205,18 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
 }
 // 教授：復活後一次性能力回來；只在首夜行動的馬上再用一次；順序在後面的今晚照常醒
 {
+  const r = mk(['professor', 'gossip', 'zombuul', 'mastermind', 'saint', 'fool'], 'bmr');
+  const gossip = S(r, 'gossip');
+  startDay(r);
+  killSeat(r, gossip, '說書人手動標記');
+  startNight(r);
+  assert.strictEqual(r.g.step.roleId, 'professor');
+  ok(raw(r, 'professor', [gossip.id]));
+  ack(r);
+  assert.strictEqual(gossip.dead, false);
+  assert.strictEqual(r.g.step.roleId, 'gossip', '剛復活的造謠者當晚仍須結算');
+}
+{
   const r = mk(['professor', 'imp', 'poisoner', 'slayer', 'chef', 'empath'], 'bmr');
   r.g.slayerUsed = true; r.g.shotEver = [S(r, 'slayer').id]; S(r, 'slayer').dead = true;
   go(r, ['professor']);
@@ -337,6 +349,73 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
   act(r, 'poisoner', [S(r, 'goon').id]);
   assert.strictEqual(viewFor(r, { pid: S(r, 'goon').pid }).myAlign, 'evil');
   assert.strictEqual(viewFor(r, { pid: S(r, 'chef').pid }).myAlign, null);
+}
+// 珀逐個攻擊：先選月之子死，選到莽夫才醉，祖母不死（官方示例）。
+{
+  const r = mk(['po', 'moonchild', 'goon', 'grandmother', 'godfather', 'sailor'], 'bmr');
+  const [po, moonchild, goon, grandmother] = r.seats;
+  r.g.poCharge = { [po.id]: true };
+  go(r, ['po']);
+  ok(raw(r, 'po', [moonchild.id, goon.id, grandmother.id]));
+  assert.ok(moonchild.dead && !goon.dead && !grandmother.dead);
+  assert.ok(impaired(r, po) && isEvil(goon));
+  assert.equal(r.g.poCharge[po.id], false);
+  assert.deepEqual(r.g.step.result.e.each.map(x => x.res), ['kill', 'fail', 'fail']);
+}
+// 沙巴洛斯第一刀選莽夫會醉；第二刀才選莽夫則第一個目標先死。
+for (const goonFirst of [true, false]) {
+  const r = mk(['shabaloth', 'gambler', 'goon', 'godfather', 'sailor', 'gossip'], 'bmr');
+  const [shabaloth, gambler, goon] = r.seats;
+  go(r, ['shabaloth']);
+  const picks = goonFirst ? [goon.id, gambler.id] : [gambler.id, goon.id];
+  act(r, 'shabaloth', picks);
+  assert.equal(gambler.dead, !goonFirst);
+  assert.ok(!goon.dead && impaired(r, shabaloth) && isEvil(goon));
+  assert.deepEqual(r.g.shabaloth, picks);
+}
+// 本來就中毒的沙巴洛斯照樣能觸發莽夫，前後都不會殺人。
+{
+  const r = mk(['shabaloth', 'gambler', 'goon', 'godfather', 'sailor', 'gossip'], 'bmr');
+  const [shabaloth, gambler, goon] = r.seats;
+  go(r, ['shabaloth']);
+  r.g.poisoned = shabaloth.id;
+  ok(raw(r, 'shabaloth', [gambler.id, goon.id]));
+  ok(st(r, 'decide', { choice: 'fail' }));
+  assert.ok(!gambler.dead && !goon.dead && isEvil(goon));
+}
+// 先處理鎮長替死，再繼續剩下的攻擊，莽夫這時才生效。
+{
+  const r = mk(['po', 'mayor', 'goon', 'grandmother', 'godfather', 'sailor'], 'bmr');
+  const [po, mayor, goon, grandmother, godfather] = r.seats;
+  r.g.poCharge = { [po.id]: true };
+  go(r, ['po']);
+  ok(raw(r, 'po', [mayor.id, goon.id, grandmother.id]));
+  assert.equal(r.g.step.decide.kind, 'mayor');
+  assert.ok(!impaired(r, po) && !isEvil(goon) && !grandmother.dead);
+  ok(st(r, 'decide', { choice: godfather.id }));
+  assert.ok(godfather.dead && !mayor.dead && !goon.dead && !grandmother.dead);
+  assert.ok(impaired(r, po) && isEvil(goon));
+}
+// 第一刀把活人減到兩個，夜晚結束，沙巴洛斯不能用第二刀自殺翻轉勝負。
+{
+  const r = mk(['shabaloth', 'gambler', 'gossip', 'godfather', 'sailor'], 'bmr');
+  const [shabaloth, gambler, gossip, godfather, sailor] = r.seats;
+  godfather.dead = sailor.dead = true;
+  go(r, ['shabaloth']);
+  ok(raw(r, 'shabaloth', [gambler.id, shabaloth.id]));
+  assert.equal(r.winner, 'evil');
+  assert.ok(gambler.dead && !shabaloth.dead && !gossip.dead);
+}
+// 當晚首次選中莽夫也可以選角色：侍臣醉，莽夫轉善。
+{
+  const r = mk(['courtier', 'goon', 'po', 'godfather', 'sailor', 'gossip'], 'bmr');
+  const [courtier, goon] = r.seats;
+  goon.align = 'evil';
+  go(r, ['courtier']);
+  ok(raw(r, 'courtier', [], 'goon'));
+  ok(st(r, 'decide', { choice: 'fail' }));
+  assert.ok(impaired(r, courtier) && !impaired(r, goon) && !isEvil(goon));
+  assert.ok(r.g.used['courtier:' + courtier.id]);
 }
 // 刺客打莽夫：莽夫照死、轉邪惡；酒醉的刺客打不死，莽夫也轉邪惡
 {
@@ -472,7 +551,8 @@ for (const [role, target, pre] of [['monk', 'chef'], ['imp', 'chef'], ['imp', 'i
   const r = mk(['imp', 'chef', 'saint', 'monk', 'empath'], 'tb');
   go(r, ['imp']);
   ok(raw(r, 'imp', [S(r, 'imp').id]));
-  assert.ok(r.g.step.result.e.noHeir);
+  assert.deepStrictEqual([r.phase, r.winner], ['ended', 'good']);
+  assert.ok(r.g.log.some(l => l.e?.src === 'imp' && l.e.noHeir));
 }
 {
   const r = mk(['imp', 'baron', 'chef', 'saint', 'innkeeper'], 'bmr');

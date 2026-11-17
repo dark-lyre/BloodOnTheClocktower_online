@@ -123,6 +123,22 @@ for (const role of ['fool', 'sailor']) {
   finish(r, 'moonchild');
   assert.strictEqual(t.dead, false, '結算那夜中毒：沒有人死');
 }
+// 月之子選到莽夫時，以白天所選的陣營為準，入夜改變陣營不影響死亡。
+for (const goodAtChoice of [true, false]) {
+  const r = mk(['moonchild', 'sailor', 'devilsadvocate', 'po', 'goon', 'chambermaid', 'tinker'], 'bmr');
+  const goon = S(r, 'goon');
+  startDay(r);
+  goon.align = goodAtChoice ? 'good' : 'evil';
+  execute(r, S(r, 'moonchild'));
+  ok(pl(r, 'moonchild', 'pick', { ids: [goon.id] }));
+  ok(st(r, 'next'));
+  const role = goodAtChoice ? 'devilsadvocate' : 'sailor';
+  finish(r, role);
+  act(r, role, [goon.id]);
+  assert.strictEqual(isGoodSeat(goon), !goodAtChoice, '莽夫在夜裏改變了陣營');
+  finish(r, 'moonchild');
+  assert.strictEqual(goon.dead, goodAtChoice, '月之子按白天選人時的陣營結算');
+}
 
 // 僵怖假死時看起來只剩兩人，遊戲繼續
 {

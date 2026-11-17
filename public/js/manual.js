@@ -14,7 +14,7 @@ export const isOne = s => !!s.oneDevice;
 export const passFrom = (ctx, from, onDone) => { const s = ctx.state, l = s.seats.filter(x => x.local && x.role).map(x => x.id); passRoles(s, from ? [from] : l, onDone); };
 // 單設備第 1 夜：先讓每個人看自己的身份（傳閱，或者已經用實體牌發好了），做完記在本機，才出夜晚的第一張卡
 const passKey = s => `botc.passed.${s.code}.${s.gameId}`;
-export const needPass = ctx => { const s = ctx.state; return s.isSt && !s.peek && s.oneDevice && s.phase === 'night' && s.night === 1 && !ctx.ls.get(passKey(s)); };
+export const needPass = ctx => { const s = ctx.state; return s.isSt && !s.peek && s.oneDevice && s.phase === 'night' && s.night === 1 && !s.st?.step?.lunaticDraft && !ctx.ls.get(passKey(s)); };
 export function passCard(ctx) {
   const s = ctx.state, done = () => { ctx.ls.set(passKey(s), '1'); ctx.render(); };
   return h('div', { class: 'card focus infocard spread' },

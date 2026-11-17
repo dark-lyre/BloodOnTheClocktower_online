@@ -22,7 +22,7 @@ export function trialStub(ctx) {
   const count = o => Object.values(o || {}).filter(Boolean).length, vb = voteButtons(ctx);
   const up = nom.hand ? s.seats.filter(raised(s)).length : count(nom.votes);
   return foldStub(ctx, key, seatBadge(s, nom.nominatorId), icon('to'), seatBadge(s, nom.nomineeId), h('b', { class: 'fs-n' + (up >= needVotes(s) ? ' enough' : '') }, `${up}/${needVotes(s)}`),
-    ck && h('b', { class: 'fs-n tr-sec' }, seconds(ck)),
+    ck && h('b', { class: 'fs-n tr-sec' + (ck.waiting ? ' dbg-wait' : '') }, ck.waiting ? '等待選擇' : seconds(ck)),
     vb && h('div', { class: 'tr-k' }, vb.yes(count(nom.votes)), vb.no(count(nom.abstain))),
     nom.hand && myHand(ctx, true));
 }
@@ -44,7 +44,8 @@ function myHand(ctx, small) {
   const bySt = !pendOn(s) && nom.votes[me.id] !== undefined && !nom.own?.[me.id];
   const send = want => {
     if (want && why) return toast(why);
-    if (want === up) return;
+    const firstDown = !want && s.debug && !nom.own?.[me.id] && !pendOn(s);
+    if (want === up && !firstDown) return;
     const p = pend = { at: nom.at, who: me.id, up: want };
     ctx.render();
     ctx.act('vote', { v: want ? 'yes' : null }).then(() => { if (pend === p) { pend = null; ctx.render(); } });
@@ -139,10 +140,10 @@ function fuse(ctx, slot, c) {
 // 計票倒數（所有人都看得到）：正在選的人、大數字、一根燒著的導火索。選了就換下一位，最後兩秒變紅
 function countBar(ctx, nom, ck) {
   const s = ctx.state, id = nom.clock.order[ck.k], sec = seconds(ck);
-  return h('div', { class: 'tr-count' + (sec <= 2 && !ck.pending ? ' low' : '') },
+  return h('div', { class: 'tr-count' + (!ck.waiting && sec <= 2 && !ck.pending ? ' low' : '') },
     h('div', { class: 'tr-turn', 'data-key': 'turn-' + id }, seatBadge(s, id), h('span', {}, seatLabel(s, id).replace(/^\d+號\s*/, ''))),
-    h('b', { class: 'tr-sec', 'data-key': `s${ck.k}-${sec}` }, sec),
-    fuse(ctx, 'bar', nom.clock));
+    ck.waiting ? h('b', { class: 'tr-sec dbg-wait', 'data-key': 'wait-' + ck.k }, '等待選擇')
+      : [h('b', { class: 'tr-sec', 'data-key': `s${ck.k}-${sec}` }, sec), fuse(ctx, 'bar', nom.clock)]);
 }
 
 // 輪到自己：桌心彈一張選票。大數字倒數，兩枚大章二選一，點了立刻定下；預選過的那枚先亮著，到點就按它，什麼都沒選是棄權。
@@ -161,7 +162,10 @@ export function countPop(ctx) {
     play('turn');
   }
   if (!turn) return null;
-  if (live) { turn.was = nom.votes[s.myId] ? 'yes' : nom.abstain?.[s.myId] ? 'abstain' : null; turn.clock = nom.clock; turn.nom = nom; }
+  if (live) {
+    turn.was = nom.votes[s.myId] ? 'yes' : nom.abstain?.[s.myId] ? 'abstain' : null;
+    turn.clock = nom.clock; turn.nom = nom; turn.waiting = ck.waiting;
+  }
   const settled = !live || turn.pick, v = turn.pick || turn.was || 'abstain';
   // 什麼時候算定下來：點的那一下，或者輪過去的那一下
   if (settled && !turn.stamped) { turn.stamped = true; play('stamp'); }
@@ -175,8 +179,8 @@ export function countPop(ctx) {
     }, STAMP_MS);
   }
   // 等服務器回話的那一下還顯示 1；定下來後數字留著，淡在章下面
-  const sec = live ? Math.max(1, seconds(ck)) : turn.sec, low = live && sec <= 2;
-  if (live && !settled) {
+  const sec = live ? Math.max(1, seconds(ck)) : turn.sec, low = live && !turn.waiting && sec <= 2;
+  if (live && !settled && !turn.waiting) {
     if (sec !== turn.sec) { if (turn.sec) play(low ? 'tock' : 'tick'); turn.sec = sec; }
     clearTimeout(beat);
     beat = setTimeout(ctx.render, (ck.left % 1000 || 1000) + 10); // 數字踩著整秒換，音效才齊
@@ -199,9 +203,9 @@ export function countPop(ctx) {
   return h('div', { class: 'vt-pop' + (low ? ' low' : '') + (settled ? ' settled' : '') + (turn.out ? ' out' : ''), 'data-key': 'vt-' + turn.at },
     h('div', { class: 'pc vt-card' },
       h('div', { class: 'vt-top' }, h('h2', {}, '輪到你'), h('span', { class: 'vt-n' }, icon('hand'), yes, h('i', {}, '/', needVotes(s)))),
-      fuse(ctx, 'pop', turn.clock),
+      !turn.waiting && fuse(ctx, 'pop', turn.clock),
       h('div', { class: 'vt-mid' },
-        h('b', { class: 'vt-sec', 'data-key': 'sec' + sec }, sec),
+        h('b', { class: 'vt-sec' + (turn.waiting ? ' dbg-wait' : ''), 'data-key': turn.waiting ? 'wait' : 'sec' + sec }, turn.waiting ? '等你選擇' : sec),
         h('div', { class: 'vt-who' }, r ? roleToken(r) : h('div', { class: 'token md blank' }, i + 1), h('span', {}, seat && `${i + 1}號 ${seat.name}`))),
       h('div', { class: 'vt-btns' }, btn('yes'), btn('abstain')),
       settled && h('div', { class: 'ink-stamp vt-stamp ' + CHOICE[v][1], 'data-key': 'stamp' }, CHOICE[v][0])));

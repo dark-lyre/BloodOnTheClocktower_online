@@ -87,6 +87,8 @@ console.log('隨機抽取：提線木偶坐在惡魔旁邊 ✔');
   set(r, ['imp', 'marionette', 'poisoner', 'lunatic', 'chef', 'washerwoman', 'monk', 'soldier'], { 1: 'empath', 3: 'imp' });
   ok(st(r, 'next', { force: true }));
   const [imp, pup, poi, luna] = r.seats;
+  assert.strictEqual(r.g.step.lunaticDraft.minions.length, 1);
+  ok(st(r, 'ack'));
   assert.deepStrictEqual([r.g.step.roleId, r.g.step.lines.map(l => l.seatId)], ['minioninfo', [poi.id]]);
   ok(st(r, 'ack'));
   assert.deepStrictEqual([r.g.step.roleId, r.g.step.lines[0].minions.length], ['lunainfo', 1], '瘋子的假爪牙一個（提線木偶不算）');

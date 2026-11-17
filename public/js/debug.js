@@ -1,6 +1,6 @@
 // 測試服的調試工具（服務器開了 BOTC_DEBUG 才有）：大廳左上角的「調試模式」勾選；勾上以後建的房間、回到的自己主持的房間裏，
 // 頂欄的身份換成一個按鈕——換成任意座位的身份（看到的、能做的都和那位玩家一樣）、加減機器人、自己在座位上時機器人代為主持
-import { h, menu } from './ui.js';
+import { h, menu, modal } from './ui.js';
 import { icon, mini } from './glyph.js';
 import { ROLES } from './roles.js';
 import { unseenOf } from './hud.js';
@@ -59,7 +59,23 @@ function debugMenu(ctx, anchor) {
     '-',
     { label: h('span', { class: 'dbg-row' + (d.auto ? ' on' : '') }, h('i', { class: 'dbg-tick' }, icon('check')), '離席時自動主持'),
       onclick: () => ctx.st('dbgAuto', { on: !d.auto }) },
+    bots > 0 && { label: [icon('gear', 'menu-ico'), '機器人自動操作'], onclick: () => botSettings(ctx, anchor) },
   ]);
+}
+
+function botSettings(ctx, anchor) {
+  const s = ctx.state;
+  const rows = s.debug.seats.filter(seat => seat.bot).map(seat => {
+    const toggle = h('input', { type: 'checkbox', class: 'switch', checked: seat.auto !== false, onchange: async () => {
+      const on = toggle.checked;
+      toggle.disabled = true;
+      const r = await ctx.st('dbgBotAuto', { seatId: seat.id, on });
+      if (!r.ok) toggle.checked = !on;
+      toggle.disabled = false;
+    } });
+    return h('label', { class: 'set-row' }, who(s, seat.id), toggle);
+  });
+  modal('機器人自動操作', h('div', { class: 'settings' }, rows), { from: anchor });
 }
 
 // 鍵盤：數字鍵換座位，0 換回說書人。10 號以上的連按兩位（1 → 2 就是 12 號）

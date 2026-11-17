@@ -92,6 +92,17 @@ function finish(r, until) {
   act(r, 'imp', [S(r, 'chef').id]);
   assert.strictEqual(S(r, 'chef').dead, false, '被旅店老闆保護');
 }
+{
+  const r = mk(['innkeeper', 'chef', 'shabaloth', 'godfather', 'saint', 'tinker'], 'bmr');
+  const innkeeper = S(r, 'innkeeper'), chef = S(r, 'chef');
+  startNight(r);
+  pick(r, 'innkeeper', [innkeeper.id, chef.id]);
+  ok(st(r, 'decide', { choice: innkeeper.id }));
+  assert.ok(impaired(r, innkeeper), '旅店老闆自己醉酒');
+  assert.ok(r.g.log.some(l => l.e?.why === 'innkeeperDrunk'), '日誌說明兩人的保護失效');
+  act(r, 'shabaloth', [chef.id, innkeeper.id]);
+  assert.ok(chef.dead && innkeeper.dead, '旅店老闆醉酒後，被選中的兩人都能被惡魔殺死');
+}
 
 // 僵怖：第一次被處決看起來死了但還活著，遊戲繼續；今天有人死，僵怖今晚不醒
 {

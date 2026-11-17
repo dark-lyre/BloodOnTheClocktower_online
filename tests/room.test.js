@@ -279,6 +279,49 @@ try {
   assert.match((await call(conn('10.0.4.1'), 'pl:join', { code: R.code, pid: 'z', name: 'z' })).error, /不存在/);
   await wait(900);
   assert.ok(!fs.existsSync(file), '解散後存檔刪掉');
+
+  // 陣營切換後，即時重發可見的聊天，避免客戶端把已退出的群聊留在畫面上。
+  const groupHost = conn('10.0.6.1');
+  const groupRoom = await call(groupHost, 'st:create');
+  assert.ok(groupRoom.ok);
+  const groupRoles = ['imp', 'poisoner', 'chef', 'monk', 'washerwoman', 'librarian', 'virgin'];
+  const groupSocks = groupRoles.map((_, i) => conn(`10.0.7.${i + 1}`));
+  const grouped = until(groupHost, x => x.seats.length === groupRoles.length);
+  for (const [i, socket] of groupSocks.entries()) {
+    assert.ok((await call(socket, 'pl:join', { code: groupRoom.code, inst: groupRoom.inst, pid: `group-${i}`, name: `group-${i}` })).ok);
+  }
+  const { seats: groupSeats } = await grouped;
+  const groupOp = async (op, fields = {}) => {
+    const reply = await call(groupHost, 'st:op', { op, ...fields });
+    assert.ok(reply.ok, reply.error);
+  };
+  for (const [i, roleId] of groupRoles.entries()) await groupOp('setRole', { seatId: groupSeats[i].id, roleId });
+  const [demonSocket, minionSocket, joinerSocket] = groupSocks;
+  const starting = until(demonSocket, x => x.phase === 'night' && x.chatGroups.length === 1);
+  await groupOp('next');
+  const [{ id: groupId }] = (await starting).chatGroups;
+  const groupSay = async text => {
+    const reply = await call(demonSocket, 'pl:act', { act: 'chat', to: groupId, text });
+    assert.ok(reply.ok, reply.error);
+  };
+  const original = until(minionSocket, x => x.chat.some(m => m.text === '陣營原消息'));
+  await groupSay('陣營原消息');
+  assert.strictEqual((await original).chatReset, false, '群聊正常送出只發增量');
+
+  const joined = until(joinerSocket, x => x.chatGroups.length === 1);
+  await groupOp('setAlign', { seatId: groupSeats[2].id, align: 'evil' });
+  const joinedView = await joined;
+  assert.strictEqual(joinedView.chatReset, true);
+  assert.ok(!joinedView.chat.some(m => m.text === '陣營原消息'), '新盟友不能收到入群前的談話');
+  const newChat = until(joinerSocket, x => x.chat.some(m => m.text === '新盟友看到'));
+  await groupSay('新盟友看到');
+  assert.strictEqual((await newChat).chat.find(m => m.text === '新盟友看到').to, joinedView.chatGroups[0].id);
+  const dropped = until(joinerSocket, x => !x.chatGroups.length);
+  await groupOp('setAlign', { seatId: groupSeats[2].id, align: 'good' });
+  const droppedView = await dropped;
+  assert.strictEqual(droppedView.chatReset, true, '離開陣營時清除已呈現的聊天');
+  assert.ok(!droppedView.chat.some(m => m.text === '新盟友看到'));
+  assert.ok(!(await call(joinerSocket, 'pl:act', { act: 'chat', to: joinedView.chatGroups[0].id, text: '已退出' })).ok);
   console.log('room server tests ok');
 } finally {
   socks.forEach(s => s.close());

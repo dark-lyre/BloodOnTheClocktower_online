@@ -303,4 +303,49 @@ const vigorKill = (r, t) => {
   assert.ok(charged(po), '中毒的珀蓄力有演出');
 }
 
+// 造謠者：首夜跳過，其他夜晚由說書人分別回答是否發表、真偽，以及能力生效時選誰死亡。
+{
+  const roles = ['gossip', 'fool', 'chef', 'imp', 'assassin'];
+  const r = mk(roles, 'bmr');
+  r.g.night = 0;
+  startNight(r);
+  assert.ok(!r.g.order.includes('gossip'), '首夜沒有造謠裁定');
+
+  for (const result of ['none', 'false', 'kill', 'blocked', 'poisoned', 'diedToday', 'diedTonight']) {
+    const room = mk(roles, 'bmr');
+    const gossip = S(room, 'gossip');
+    if (result === 'diedToday') {
+      startDay(room);
+      ok(applyStOp(room, { op: 'setDead', seatId: gossip.id, dead: true }));
+    }
+    startNight(room);
+    if (result === 'poisoned') ok(applyStOp(room, { op: 'setPoison', seatId: gossip.id }));
+    if (result === 'diedTonight') {
+      assert.ok(toStep(room, 'imp'));
+      pick(room, [gossip.id]);
+    }
+    assert.strictEqual(toStep(room, 'gossip').decide.kind, 'gossip-made', result);
+    const decide = choice => ok(applyStOp(room, { op: 'decide', choice }));
+    decide(result === 'none' ? 'no' : 'yes');
+    const logs = () => room.g.log.filter(l => l.e?.src === 'gossip');
+    if (result === 'none') {
+      assert.strictEqual(logs().length, 0, '沒有發表就不記錄成發表過');
+      continue;
+    }
+    assert.strictEqual(room.g.step.decide.kind, 'gossip-truth');
+    decide(result === 'false' ? 'false' : 'true');
+    if (result === 'kill' || result === 'blocked') {
+      assert.strictEqual(room.g.step.decide.kind, 'gossip');
+      const target = S(room, result === 'kill' ? 'chef' : 'fool');
+      decide(target.id);
+      assert.strictEqual(target.dead, result === 'kill');
+      assert.deepStrictEqual(logs().at(-1).e.to, [target.id]);
+    }
+    const log = logs().at(-1);
+    assert.ok(log, `有發表就有日誌：${result}`);
+    assert.match(log.text, result === 'false' ? /聲明不正確/ : /聲明正確/);
+    assert.match(log.text, result === 'kill' ? /死亡$/ : /無人因此死亡$/);
+  }
+}
+
 console.log('dlc play regressions ok');

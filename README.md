@@ -1,10 +1,12 @@
 # 血染钟楼 · 线上魔典（自动推进版）
 
+本仓库基于 [on9dra/clocktower-online](https://github.com/on9dra/clocktower-online)，原作者为 [on9dra](https://github.com/on9dra)。[dark-lyre](https://github.com/dark-lyre) 仅在原项目基础上做符合个人使用偏好的调整与修复，保留原项目的提交历史、作者署名和 [MIT 许可证](LICENSE)。本版本的改动仅代表个人使用偏好，清单见 [个人版本改动说明](docs/personal-changes.md)。
+
 说书人随机抽取或手动指定角色、确认开局，系统按夜晚顺序唤醒玩家、结算能力；给信息时系统列出选项并标出真实答案，由说书人挑选并确认。不想让系统结算、或者要带自制剧本时，开局选手动模式。语音请配合腾讯会议等。
 
-**在线试玩：https://tianheile.cc**（创建房间，把房间号发给朋友）
+**原项目在线试玩：https://tianheile.cc**（原作者部署的版本；创建房间，把房间号发给朋友）
 
-当前版本：**1.0.1**（2026-11-07），更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+上游基础版本：**1.0.1**（2026-11-07），上游更新记录见 [CHANGELOG.md](CHANGELOG.md)，个人版本改动见 [docs/personal-changes.md](docs/personal-changes.md)。
 
 ![白天](docs/img/screenshot-day.webp)
 ![夜晚](docs/img/screenshot-night.webp)
@@ -13,6 +15,8 @@
 
 <details>
 <summary>English</summary>
+
+This is [dark-lyre](https://github.com/dark-lyre)'s personally customized version of [on9dra/clocktower-online](https://github.com/on9dra/clocktower-online), originally created by [on9dra](https://github.com/on9dra). The original commit history, attribution and MIT license are preserved. Personal changes are documented in [docs/personal-changes.md](docs/personal-changes.md).
 
 An unofficial, browser-based grimoire for *Blood on the Clocktower* (Chinese UI, Simplified / Traditional). The storyteller draws roles at random and confirms; the server then wakes players in night order, resolves abilities, and offers the storyteller legal answers for information roles. Players join from their phones with a 4-digit room code. Supports Trouble Brewing, Bad Moon Rising and Sects & Violets. Voice chat is not included — use any call app.
 

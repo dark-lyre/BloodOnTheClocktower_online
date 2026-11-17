@@ -205,6 +205,8 @@ const nom = (r, from, to) => ok(st(r, 'nominate', { fromId: S(r, from).id, toId:
   Object.assign(r, { debug: true });
   Object.assign(r.settings, { venue: 'offline', devices: 'many', chosen: true, pretend: false });
   ok(st(r, 'addBots', { n: 6 }));
+  ok(st(r, 'dbgAuto', { on: true }));
+  for (const s of r.seats) ok(st(r, 'dbgBotAuto', { seatId: s.id, on: true }));
   ok(st(r, 'next'));
   const roles = ['imp', 'poisoner', 'chef', 'empath', 'monk', 'saint'];
   r.seats.forEach((s, i) => Object.assign(s, { role: roles[i], fakeRole: null }));

@@ -250,6 +250,7 @@ const done = (r, askId) => r.g.askDone?.find(d => d.id === askId);
 {
   const r = game();
   r.debug = true;
+  ok(st(r, 'dbgAuto', { on: true }));
   const me = r.seats[2];
   setPresence(r, [me.id], false);
   ok(applyPlayerAction(r, me.pid, { act: 'nominate', targetId: id(r, 0) }));

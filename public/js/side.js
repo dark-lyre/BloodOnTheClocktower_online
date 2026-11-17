@@ -27,7 +27,9 @@ export function openChat(ctx, ch) {
   ui.tab = 'chat'; ui.chat = ch; ui.focus = wide(); ui.sheet = true;
   ctx.ls.set('botc.side', ''); ctx.render();
 }
-const lastSeqOf = s => s.chat.at(-1)?.seq || 0;
+// 身份遮罩只遮桌面；側欄仍可查閱服務端已按本人權限過濾的完整聊天。
+const chatLogOf = s => s.chatLog || s.chat;
+const lastSeqOf = s => chatLogOf(s).at(-1)?.seq || 0;
 
 // 玩家自己記的（自稱、猜測、陣營、備註）在 pmarks.js：只存在本機，按房間 + 局 + 座位區分
 // 說書人給我的信息裏帶的座位標記：{ seatId: [{ r, q, demon, t, text }] }（同樣的只留一個）
@@ -86,15 +88,18 @@ const setCollapsed = (ctx, v) => {
   moving = setTimeout(() => { document.body.classList.remove('side-moving'); ctx.render(); }, 340);
 };
 
-// 未讀：別人發的聊天（不算系統公告；玩家的說書人信息另有彈窗），按頻道統計 { 頻道: { n, last } }
+const chatVisible = (s, m) => m.k !== 'act' && (s.isSt || !m.info || !msgHeld(m));
+// 未讀：別人發的聊天和說書人信息（不算系統公告），按頻道統計 { 頻道: { n, last } }。
+// 信息和私聊顯示共用可見性：演出還沒播完時不提前提示；遮住身份時只顯示未讀數、不預覽私密正文。
 export function chatUnread(s) {
   const out = {};
-  for (const m of s.chat) {
-    if (m.from === 'sys' || (m.info && !s.isSt) || m.k === 'act' || (s.isSt ? m.from === 'st' : m.from === s.myId)) continue;
+  for (const m of chatLogOf(s)) {
+    if (m.from === 'sys' || !chatVisible(s, m) || (s.isSt ? m.from === 'st' : m.from === s.myId)) continue;
     const ch = channelOf(s, m);
+    if (!ch) continue;
     if (m.seq <= (ui.seen[ch] ?? ui.base ?? Infinity)) continue;
     (out[ch] ||= { n: 0 }).n++;
-    out[ch].last = m;
+    out[ch].last = s.veiled && m.info ? { ...m, text: null } : m;
   }
   return out;
 }
@@ -167,6 +172,7 @@ export function renderSide(ctx) {
 
 function channelOf(s, m) {
   if (m.to === 'all') return 'all';
+  if (isGroupChan(m.to)) return groupOf(s, m.to) ? m.to : null;
   if (s.isSt) return m.from === 'st' ? m.to : m.to === 'st' ? m.from : 'whisper';
   if (m.from === 'st' || m.to === 'st') return 'st';
   return m.from === s.myId ? m.to : m.from;
@@ -180,7 +186,8 @@ const msgView = (s, m) => {
     h('div', { class: 'msg-k' }, m.fromName, ' · ', new Date(m.at).toTimeString().slice(0, 5)),
     h('div', { class: 'pre' }, m.text));
 };
-const msgsOf = (s, ch) => s.chat.filter(m => channelOf(s, m) === ch && !(m.info && !s.isSt) && m.k !== 'act');
+// 說書人發送的信息也保留在雙方私聊裏；玩家等信息演出播完才顯示，自己的選人記錄只放在信息面板。
+export const chatMessages = (s, ch) => chatLogOf(s).filter(m => channelOf(s, m) === ch && chatVisible(s, m));
 // 手機上點輸入框彈出鍵盤：可視區變矮，消息列表停在原位，最新的幾條被擋在下面。鍵盤升起的那段時間裏一直把列表貼到底
 // （visualViewport 不是頁面裏的節點，直接掛監聽，0.9 秒後摘掉）
 function pinOnKeyboard(e) {
@@ -209,18 +216,22 @@ function composer(ctx, ch, btn, hint) {
 }
 
 // 遊戲日誌：只讀，公開發生的事和說書人的公告；說書人底下多一個發公告的輸入框
-const renderPublic = ctx => renderGameLog(ctx, msgsOf(ctx.state, 'all').filter(m => m.from === 'sys' || m.from === 'st'),
+const renderPublic = ctx => renderGameLog(ctx, chatMessages(ctx.state, 'all').filter(m => m.from === 'sys' || m.from === 'st'),
   ctx.state.isSt && !ctx.state.peek && composer(ctx, 'all', '公告', '發給所有人的公告'));
 
-// 聊天的頁籤：公共在最前；說書人看每個座位和玩家之間的私聊記錄，玩家看說書人和其他座位，觀戰的人只有公共
-const chatChans = s => ['all', ...(s.isSt ? [...s.seats.map(x => x.id), 'whisper'] : s.myId ? ['st', ...s.seats.filter(x => !x.mine).map(x => x.id)] : [])];
+// 聊天的頁籤：公共在最前，然後是自己能進的群聊和私聊。
+const groupsOf = s => s.chatGroups || [];
+const groupOf = (s, ch) => groupsOf(s).find(g => g.id === ch);
+const isGroupChan = ch => typeof ch === 'string' && ch.startsWith('group-');
+const chatChans = s => ['all', ...groupsOf(s).map(g => g.id),
+  ...(s.isSt ? [...s.seats.map(x => x.id), 'whisper'] : s.myId ? ['st', ...s.seats.filter(x => !x.mine).map(x => x.id)] : [])];
 const CHAN = { all: '公共', st: '說書人', whisper: '私聊記錄' };
-const chanHint = (s, ch) => (ch === 'all' ? '對所有人說' : ch === 'st' ? '對說書人說' : `對 ${seatLabel(s, ch)} 說`);
+const chanHint = (s, ch) => (ch === 'all' ? '對所有人說' : ch === 'st' ? '對說書人說' : groupOf(s, ch)?.label || `對 ${seatLabel(s, ch)} 說`);
 
 // 聊天：左邊一列頁籤，選中哪頁就和誰聊；翻到座位那頁，頁頭帶上自己標的和說書人給的信息，免得認錯人
 function renderChat(ctx, byCh) {
-  const s = ctx.state, ch = ui.chat, chans = chatChans(s), seat = s.seats.find(x => x.id === ch);
-  const msgs = msgsOf(s, ch).filter(m => m.from !== 'sys');
+  const s = ctx.state, chans = chatChans(s), ch = ui.chat, seat = s.seats.find(x => x.id === ch);
+  const msgs = chatMessages(s, ch).filter(m => m.from !== 'sys');
   if (ui.focus) {
     ui.focus = false;
     setTimeout(() => document.querySelector(`[data-keep="chat-${ch}"]`)?.focus(), 0);
@@ -228,8 +239,9 @@ function renderChat(ctx, byCh) {
   const flip = c => { ui.chat = c; ui.focus = wide(); ctx.render(); tabIn('.chan-page'); };
   const tab = c => {
     const i = s.seats.findIndex(x => x.id === c);
-    return h('button', { class: 'chan-tab' + (c === ch ? ' on' : ''), 'data-key': 'tab-' + c, title: s.seats[i]?.name, onclick: () => flip(c) },
-      i >= 0 && h('b', {}, i + 1), h('span', {}, s.seats[i]?.name ?? CHAN[c]), unreadBadge(byCh[c]?.n || 0));
+    const label = s.seats[i]?.name ?? groupOf(s, c)?.label ?? CHAN[c];
+    return h('button', { class: 'chan-tab' + (c === ch ? ' on' : ''), 'data-key': 'tab-' + c, title: label, onclick: () => flip(c) },
+      i >= 0 && h('b', {}, i + 1), h('span', {}, label), unreadBadge(byCh[c]?.n || 0));
   };
   return h('div', { class: 'tab-body chat chan' + (chans.length > 1 ? '' : ' solo') },
     chans.length > 1 && h('nav', { class: 'chan-rail' }, chans.map(tab)),

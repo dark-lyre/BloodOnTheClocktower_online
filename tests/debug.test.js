@@ -21,9 +21,12 @@ const { nominate } = await import('../lib/day.js');
 const ok = r => assert.strictEqual(r, undefined, r);
 const st = (r, op, args = {}) => applyStOp(r, { op, ...args });
 const debugRoom = n => { const r = store.createRoom(); r.debug = true; r.settings.pretend = false; if (n) ok(st(r, 'addBots', { n })); return r; };
+const autoBots = r => r.seats.forEach(s => ok(st(r, 'dbgBotAuto', { seatId: s.id, on: true })));
 // 開局後按座位換成指定角色，從第一個白天開始（和 helpers.js setup 一樣跳過首夜）
 function started(roles) {
   const r = debugRoom(roles.length);
+  ok(st(r, 'dbgAuto', { on: true }));
+  autoBots(r);
   ok(st(r, 'next'));
   r.seats.forEach((s, i) => Object.assign(s, { role: roles[i], fakeRole: null }));
   Object.assign(r.g, { redHerring: null, queue: [], step: null });
@@ -98,6 +101,7 @@ function started(roles) {
   const r = debugRoom();
   ok(st(r, 'venue', { venue: 'offline', devices: 'many' }));
   ok(st(r, 'addBots', { n: 7 }));
+  ok(st(r, 'dbgAuto', { on: true }));
   ok(st(r, 'next'));
   ['imp', 'poisoner', 'fortuneteller', 'empath', 'monk', 'chef', 'soldier'].forEach((id, i) => Object.assign(r.seats[i], { role: id, fakeRole: null }));
   Object.assign(r.g, { redHerring: null, queue: [], step: null });
@@ -147,6 +151,7 @@ function started(roles) {
   r.phase = 'dawn';
   ok(st(r, 'next'));
   const [a, b] = r.seats;
+  Object.assign(b, { role: 'soldier', fakeRole: null }); // 單測舉手，避免抽中貞潔者時多出反噬裁定
   ok(nominate(r, a, b));
   assert.ok(r.nomination.hand, '線下多設備是當面舉手');
   r.nomination.votes[a.id] = 'yes';
@@ -179,6 +184,114 @@ const until = (s, pred, ms = 4000) => new Promise((res, rej) => {
 // 向系統要一個空閒端口（隨機挑的會撞上本機開著的調試服務）
 const port = () => new Promise(res => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 
+async function manualTurns(URL) {
+  const opts = { forceNew: true, transports: ['websocket'] };
+  const s = io(URL, opts), pl = io(URL, opts);
+  socks.push(s, pl);
+  const accept = async (socket, event, data) => {
+    const result = await call(socket, event, data);
+    assert.ok(result.ok, result.error);
+    return result;
+  };
+  const update = async (event, data, pred, socket = s) => {
+    const [v] = await Promise.all([until(s, pred), accept(socket, event, data)]);
+    return v;
+  };
+  const op = (op, args = {}) => accept(s, 'st:op', { op, ...args });
+  const step = (op, args, pred) => update('st:op', { op, ...args }, pred);
+  const player = (act, args, pred, socket = s) => update('pl:act', { act, ...args }, pred, socket);
+  const chooses = id => v => v.myId === id && !!v.prompt;
+  const atStep = (role, status) => v => v.isSt && v.st.step?.roleId === role && v.st.step.status === status;
+  let latest;
+  s.on('state', v => { latest = v; });
+
+  const R = await accept(s, 'st:create', { debug: true });
+  await op('venue', { venue: 'online' });
+  await op('script', { scriptId: 'bmr' });
+  await op('addBots', { n: 4 });
+  const v = await update('pl:join', { code: R.code, inst: R.inst, pid: 'manual-turns-player', name: '真人' }, x => x.seats.length === 5, pl);
+  const [sailor, innkeeper, advocate, zombuul, teaLady] = v.seats.map(x => x.id);
+  const roles = ['sailor', 'innkeeper', 'devilsadvocate', 'zombuul', 'tealady'];
+  for (let i = 0; i < roles.length; i++) await op('setRole', { seatId: v.seats[i].id, roleId: roles[i] });
+  assert.ok(!(await call(s, 'st:op', { op: 'dbgBotAuto', seatId: teaLady, on: false })).ok, '不能改真人的自動操作');
+  assert.strictEqual(v.debug.auto, false, '新房間默認由說書人親自主持');
+  assert.ok(v.debug.seats.filter(x => x.bot).every(x => x.auto === false), '新機器人默認手動操作');
+  await op('dbgBotAuto', { seatId: advocate, on: true });
+  const prefs = await step('dbgBotAuto', { seatId: zombuul, on: true }, x => x.debug.seats.find(y => y.id === zombuul)?.auto === true);
+  assert.deepStrictEqual(prefs.debug.seats.filter(x => x.bot).map(x => x.auto), [false, false, true, true]);
+
+  // 手動換去別的座位仍可操作；局面未推進時，不搶回身份也不讓水手自動選擇。
+  await step('next', {}, chooses(sailor));
+  await update('dbg:as', { seatId: innkeeper }, x => x.myId === innkeeper);
+  await player('chat', { to: 'all', text: '先看看旅店老闆' }, x => x.chat.some(m => m.text === '先看看旅店老闆'));
+  await wait(1100);
+  assert.strictEqual(latest.myId, innkeeper);
+  assert.strictEqual(latest.debug.turn, sailor);
+  await update('dbg:as', { seatId: sailor }, chooses(sailor));
+
+  // 玩家選人後交回說書人；開著自動操作的魔鬼代言人會自己選，再停在說書人的確認卡。
+  await player('pick', { ids: [teaLady] }, atStep('sailor', 'decide'));
+  await step('decide', { choice: teaLady }, atStep('devilsadvocate', 'ack'));
+  await step('ack', {}, atStep('dawn', 'review'));
+  await step('dawn', {}, x => x.isSt && x.phase === 'day');
+
+  // 立即計票按座位順序交接；手動座位不會被五秒的自動計票跳過。
+  await player('nominate', { targetId: teaLady }, x => x.nomination?.nomineeId === teaLady, pl);
+  const counting = await step('startCount', {}, x => x.myId === sailor && x.nomination?.clock?.waiting);
+  const { at, step: voteTime } = counting.nomination.clock;
+  await wait(Math.max(0, at + voteTime - Date.now()) + 150);
+  assert.strictEqual(latest.myId, sailor);
+  assert.strictEqual(latest.nomination.clock.k, 0);
+  assert.strictEqual(latest.nomination.clock.waiting, true);
+  await player('vote', { v: 'abstain' }, x => x.myId === innkeeper && x.nomination?.clock?.waiting);
+  await player('vote', { v: 'abstain' }, x => x.nomination?.clock?.k === 4);
+  await player('vote', { v: 'abstain' }, x => x.isSt && !x.nomination && x.history.length === 1, pl);
+
+  // 第二夜按水手 → 說書人 → 旅店老闆交接，裁定由說書人選，下一位由玩家選。
+  const second = await step('next', {}, chooses(sailor));
+  assert.strictEqual(second.night, 2);
+  await player('pick', { ids: [zombuul] }, atStep('sailor', 'decide'));
+  await step('decide', { choice: sailor }, chooses(innkeeper));
+  await player('pick', { ids: [advocate, teaLady] }, atStep('innkeeper', 'decide'));
+}
+
+async function manualMoonchild(URL, offline) {
+  const s = io(URL, { forceNew: true, transports: ['websocket'] });
+  socks.push(s);
+  const send = async (event, data, pred) => {
+    const state = pred ? until(s, pred) : null;
+    const result = await call(s, event, data);
+    assert.ok(result.ok, result.error);
+    return state || result;
+  };
+  const op = (op, args = {}, pred) => send('st:op', { op, ...args }, pred);
+  let latest;
+  s.on('state', v => { latest = v; });
+
+  await send('st:create', { debug: true });
+  await op('venue', { venue: offline ? 'offline' : 'online', devices: 'many' });
+  await op('script', { scriptId: 'bmr' });
+  const v = await op('addBots', { n: 5 }, x => x.seats.length === 5);
+  const [moonchild, victim] = v.seats;
+  const roles = ['moonchild', 'fool', 'zombuul', 'tealady', 'pacifist'];
+  for (let i = 0; i < roles.length; i++) await op('setRole', { seatId: v.seats[i].id, roleId: roles[i] });
+  const started = await op('next', {}, x => x.phase === 'night');
+  if (started.st.step.status === 'fake') await op('pretend', {}, x => x.st?.step?.status === 'review');
+  await op('dawn', {}, x => x.phase === 'day');
+  if (offline) await op('dbgAuto', { on: true }); // 就算開了代班說書人，也要等手動月之子自己選。
+
+  const isMoonchildTurn = x => x.myId === moonchild.id && x.prompt?.roleId === 'moonchild';
+  await op('setDead', { seatId: moonchild.id, dead: true }, isMoonchildTurn);
+  await send('dbg:as', { seatId: victim.id }, x => x.myId === victim.id);
+  await wait(1750);
+  assert.ok(!latest.words.length, '即使暫時切換身份，也不替月之子選人');
+  await send('dbg:as', { seatId: moonchild.id }, isMoonchildTurn);
+  const selected = await send('pl:act', { act: 'pick', ids: [victim.id] }, x => x.words.some(w => w.from === moonchild.id));
+  assert.equal(selected.words.find(w => w.from === moonchild.id).to, victim.id);
+  if (!offline) assert.ok(selected.isSt, '線上月之子選完後交回說書人');
+  s.close();
+}
+
 let server;
 try {
   // 正式服：大廳沒有調試模式，建房帶上 debug 也不算，沒有機器人、不能換身份
@@ -195,6 +308,7 @@ try {
     assert.ok(!told, '正式服不亮調試模式');
     assert.strictEqual(v.debug, undefined);
     assert.match((await call(s, 'st:op', { op: 'addBots', n: 3 })).error, /調試/);
+    assert.match((await call(s, 'st:op', { op: 'dbgBotAuto', seatId: 'nope', on: false })).error, /調試/);
     assert.strictEqual((await call(s, 'dbg:as', { seatId: null })).error, '無權限');
     s.close();
     server.kill();
@@ -241,6 +355,9 @@ try {
     v = await until(s2, x => x.code === R.code);
     assert.ok(v.isSt && !v.debug);
     assert.strictEqual((await call(s2, 'dbg:as', { seatId: third.id })).error, '無權限');
+    await manualTurns(URL);
+    await manualMoonchild(URL, false);
+    await manualMoonchild(URL, true);
     console.log('debug tests ok');
   }
 } finally {
