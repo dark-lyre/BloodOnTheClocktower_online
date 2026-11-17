@@ -81,7 +81,7 @@ for (const source of ['sailor', 'innkeeper']) {
   });
 }
 
-// https://wiki.bloodontheclocktower.com/Shabaloth — 只允許反芻「上一晚選擇」的死者。
+// 個人規則只反芻上一晚親手殺死的人；被驅魔跳過的夜晚不沿用舊記錄。
 test('Shabaloth cannot regurgitate stale targets after a night without choosing', () => {
   const room = makeRoom(['shabaloth', 'exorcist', 'mastermind', 'pacifist', 'tinker', 'grandmother', 'fool']);
   const demon = S(room, 'shabaloth'), decoy = S(room, 'pacifist');
@@ -205,15 +205,15 @@ for (const source of ['sailor', 'innkeeper']) {
   });
 }
 
-test('Shabaloth accepts a legacy record once without repeating it after Exorcism', () => {
+test('Shabaloth ignores legacy selections that do not prove an actual kill', () => {
   const room = makeRoom(['shabaloth', 'exorcist', 'mastermind', 'pacifist', 'tinker', 'grandmother', 'fool']);
   const demon = S(room, 'shabaloth'), victim = S(room, 'tinker');
   victim.dead = true;
   room.g.shabaloth = [victim.id]; // 舊格式沒有 shabalothNight。
   startNight(room);
   choose(room, 'exorcist', [demon.id]);
-  expectStep(room, 'shabaloth', 'decide');
-  decide(room, 'regurgitate', 'none');
+  assert.notEqual(room.g.step?.decide?.kind, 'regurgitate');
+  assert.equal(victim.dead, true);
   nextNight(room);
   choose(room, 'exorcist', [S(room, 'pacifist').id]);
   expectStep(room, 'shabaloth');

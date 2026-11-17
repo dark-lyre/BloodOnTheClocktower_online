@@ -109,7 +109,7 @@ function dayVote(r, from, to, voters) {
   assert.ok(!impaired(r, dr), '新亡骨魔死亡不影響已結束的舊毒');
 }
 
-// 瘋子以為自己是沙巴洛斯：他每晚在真惡魔之前醒，他選的人不能蓋掉真沙巴洛斯上一晚選的人（反芻的候選）
+// 瘋子以為自己是沙巴洛斯：他每晚在真惡魔之前醒，假選擇不能蓋掉真沙巴洛斯上一晚親手殺死的人。
 {
   const r = mk(['professor', 'lunatic', 'shabaloth', 'godfather', 'tinker', 'sailor', 'chambermaid'], 'bmr');
   const lu = S(r, 'lunatic'), sh = S(r, 'shabaloth'), [prof, cm, gf, sailor] = ['professor', 'chambermaid', 'godfather', 'sailor'].map(x => S(r, x));
@@ -130,7 +130,7 @@ function dayVote(r, from, to, voters) {
   ok(applyStOp(r, { op: 'decide', choice: 'fail' }));
   const prep = toStep(r, 'shabaloth', sh);
   assert.strictEqual(prep.decide?.kind, 'regurgitate');
-  assert.deepStrictEqual(prep.decide.options.map(o => o.id), ['none', prof.id, cm.id], '候選是真沙巴洛斯上一晚選中的人');
+  assert.deepStrictEqual(prep.decide.options.map(o => o.id), ['none', prof.id, cm.id], '個人規則：候選是真沙巴洛斯上一晚親手殺死的人');
 }
 
 // 亡骨魔殺死鏡像雙子：雙子保留能力，善良雙子之後被處決照樣邪惡獲勝（官方：死雙子沒有能力，亡骨魔讓爪牙保留能力）

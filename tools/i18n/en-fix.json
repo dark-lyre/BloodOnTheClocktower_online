@@ -305,5 +305,8 @@
  "使用預選選項，下一個": "Use preset, next",
  "使用預選選項，發送": "Use preset, send",
  "使用預選選項，確定": "Use preset, confirm",
- "預選的首夜信息": "Preset first-night info"
+ "預選的首夜信息": "Preset first-night info",
+ "每個夜晚*，你要選擇兩名玩家：他們死亡。你上一晚親手殺死且目前仍死亡的一名玩家可能被你反芻。（個人規則）": "Each night*, choose 2 players: they die. You might regurgitate one player you personally killed last night who is still dead. (House rule)",
+ "個人規則：沙巴洛斯上一晚親手殺死且目前仍死亡的一名玩家可能被反芻。沙巴洛斯選擇兩名玩家。": "House rule: Shabaloth may regurgitate one player they personally killed last night who is still dead. Shabaloth chooses 2 players.",
+ "沙巴洛斯可以讓自己上一晚親手殺死、目前仍死亡的一名玩家復活": "Shabaloth may resurrect one player they personally killed last night who is still dead"
 }

@@ -1,4 +1,4 @@
-// 角色清單（docs/role-behaviors.md）查出來的問題：每條按官方規則寫死。用法：node tests/roles.test.js
+// 角色清單（docs/role-behaviors.md）回歸測試；沙巴洛斯反芻採用個人規則。用法：node tests/roles.test.js
 import assert from 'assert';
 import { applyPlayerAction, applyStOp } from '../lib/ops.js';
 import { startNight, run } from '../lib/engine.js';
@@ -20,6 +20,7 @@ const go = (r, roles, night = 2) => {
   run(r);
 };
 const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act: 'pick', ids, role: roleId });
+const shabalothKilled = (r, target) => { r.g.shabalothKills = { [S(r, 'shabaloth').id]: { night: 1, ids: [target.id] } }; };
 
 // 鎮長把死亡轉給孫子：祖母跟著死；轉給賢者：賢者當晚醒
 {
@@ -72,7 +73,7 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
 // 沙巴洛斯：官方在喚醒他之前反芻，他醒來時已經復活了；多殺的惡魔打到鎮長也問替死
 {
   const r = mk(['mayor', 'shabaloth', 'chef', 'saint', 'monk', 'fool'], 'bmr');
-  r.g.shabaloth = [S(r, 'monk').id]; S(r, 'monk').dead = true;
+  shabalothKilled(r, S(r, 'monk')); S(r, 'monk').dead = true;
   go(r, ['shabaloth']);
   assert.strictEqual(r.g.step.decide.kind, 'regurgitate', '先反芻');
   assert.strictEqual(viewFor(r, { pid: S(r, 'shabaloth').pid }).prompt, null, '他還沒醒');
@@ -88,7 +89,7 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
 // 反芻的人當晚又被選中：又死了
 {
   const r = mk(['chef', 'shabaloth', 'saint', 'monk', 'fool', 'gossip'], 'bmr');
-  r.g.shabaloth = [S(r, 'monk').id]; S(r, 'monk').dead = true;
+  shabalothKilled(r, S(r, 'monk')); S(r, 'monk').dead = true;
   go(r, ['shabaloth']);
   ok(st(r, 'decide', { choice: S(r, 'monk').id }));
   act(r, 'shabaloth', [S(r, 'monk').id, S(r, 'saint').id]);
@@ -97,17 +98,17 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
 // 反芻的首夜角色馬上用能力，然後才叫醒沙巴洛斯
 {
   const r = mk(['chef', 'shabaloth', 'saint', 'monk', 'fool', 'gossip'], 'bmr');
-  r.g.shabaloth = [S(r, 'chef').id]; S(r, 'chef').dead = true;
+  shabalothKilled(r, S(r, 'chef')); S(r, 'chef').dead = true;
   go(r, ['shabaloth']);
   ok(st(r, 'decide', { choice: S(r, 'chef').id }));
   assert.strictEqual(r.g.step.roleId, 'chef');
   ok(st(r, 'confirm', { fields: r.g.step.form.truth }));
   assert.deepStrictEqual([r.g.step.roleId, r.g.step.status], ['shabaloth', 'choose']);
 }
-// 沒有能力不反芻；不反芻時也照常叫醒；上一晚選的人沒死不問
+// 沒有能力不反芻；不反芻時也照常叫醒；上一晚殺的人已復活不問
 {
   const r = mk(['chef', 'shabaloth', 'saint', 'monk', 'fool', 'gossip'], 'bmr');
-  r.g.shabaloth = [S(r, 'monk').id]; S(r, 'monk').dead = true;
+  shabalothKilled(r, S(r, 'monk')); S(r, 'monk').dead = true;
   r.g.poisoned = S(r, 'shabaloth').id;
   go(r, ['shabaloth']);
   r.g.poisoned = S(r, 'shabaloth').id;
@@ -116,7 +117,7 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
 }
 {
   const r = mk(['chef', 'shabaloth', 'saint', 'monk', 'fool', 'gossip'], 'bmr');
-  r.g.shabaloth = [S(r, 'monk').id]; S(r, 'monk').dead = true;
+  shabalothKilled(r, S(r, 'monk')); S(r, 'monk').dead = true;
   go(r, ['shabaloth']);
   ok(st(r, 'decide', { choice: 'none' }));
   assert.strictEqual(r.g.step.status, 'choose');
@@ -124,9 +125,9 @@ const raw = (r, role, ids, roleId) => applyPlayerAction(r, S(r, role).pid, { act
 }
 {
   const r = mk(['chef', 'shabaloth', 'saint', 'monk', 'fool', 'gossip'], 'bmr');
-  r.g.shabaloth = [S(r, 'monk').id];
+  shabalothKilled(r, S(r, 'monk'));
   go(r, ['shabaloth']);
-  assert.strictEqual(r.g.step.status, 'choose', '上一晚選的人沒死');
+  assert.strictEqual(r.g.step.status, 'choose', '上一晚殺的人已復活');
 }
 // 珀只殺一人時不會把鎮長漏掉
 {
@@ -371,7 +372,7 @@ for (const goonFirst of [true, false]) {
   act(r, 'shabaloth', picks);
   assert.equal(gambler.dead, !goonFirst);
   assert.ok(!goon.dead && impaired(r, shabaloth) && isEvil(goon));
-  assert.deepEqual(r.g.shabaloth, picks);
+  assert.deepEqual(r.g.shabalothKills[shabaloth.id].ids, goonFirst ? [] : [gambler.id]);
 }
 // 本來就中毒的沙巴洛斯照樣能觸發莽夫，前後都不會殺人。
 {
