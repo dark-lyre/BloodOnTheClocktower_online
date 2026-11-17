@@ -312,7 +312,7 @@ function finish(r, until) {
   assert.ok(!impaired(r, real), '哲學家沒了能力，真舞蛇人酒醒');
 }
 
-// 舞蛇人換到亡骨魔：爪牙鄰居的毒跟著新亡骨魔，不因為原亡骨魔沒了角色就解開
+// 舞蛇人換到亡骨魔：原角色的持續效果結束，新亡骨魔不繼承舊鄰居毒。
 {
   const r = mk(['snakecharmer', 'witch', 'oracle', 'vigormortis', 'saint', 'empath'], 'snv');
   const sc = S(r, 'snakecharmer'), vg = S(r, 'vigormortis'), oracle = S(r, 'oracle');
@@ -322,7 +322,7 @@ function finish(r, until) {
   finish(r, 'snakecharmer');
   pick(r, 'snakecharmer', [vg.id]);
   assert.strictEqual(sc.role, 'vigormortis');
-  assert.ok(impaired(r, oracle), '新亡骨魔能力正常，毒還在');
+  assert.ok(!impaired(r, oracle), '原亡骨魔失去角色，舊鄰居毒立即結束');
 }
 
 // 哲學家：選在場的角色，原持有者醉酒；麻臉巫婆變人不改陣營

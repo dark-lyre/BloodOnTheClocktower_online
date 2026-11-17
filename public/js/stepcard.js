@@ -334,13 +334,13 @@ function ackCard(ctx, step) {
       : B('確認', next, 'wide' + stepLock())));
 }
 
-// 線下：白天紅唇女郎接任惡魔，沒有夜晚步驟可停，說書人這邊彈一張：告訴誰、他變成了什麼。單設備整屏給她看；多設備她手機上已經有了。
-// 一句話照著念：夜裏是「叫醒 ⑤，讓他得知自己變成了 小惡魔」，白天「私下告知 ⑤：他變成了 小惡魔」
+// 線下沒有當前能力卡可停的私下告知：紅唇女郎接任、鏡像雙子重新配對等。
+// 按消息類型說明誰得知什麼；單設備可整屏展示，多設備的信息已發到對應手機。
 export function noticeCard(ctx, n) {
-  const s = ctx.state, done = () => ctx.st('notice'), r = n.f.find(t => t.r)?.r;
-  const say = !s.oneDevice ? h('div', { class: 'ic-say tell' }, seatBadge(s, n.seatId), w('變成了', 'ink'), named(r))
-    : s.phase === 'night' ? tellLine(s, n.seatId, 'become', named(r))
-      : h('div', { class: 'ic-say tell' }, w('私下告知', 'ink'), seatBadge(s, n.seatId), w('：他變成了', 'ink'), named(r));
+  const s = ctx.state, done = () => ctx.st('notice'), kind = n.k === 'info' ? toldKind(n) : 'become', obj = toldObj(s, { ...n, k: n.k || 'role' });
+  const say = !s.oneDevice ? h('div', { class: 'ic-say tell' }, seatBadge(s, n.seatId), phoneFact(kind, obj))
+    : s.phase === 'night' ? tellLine(s, n.seatId, kind, obj)
+      : h('div', { class: 'ic-say tell' }, w('私下告知', 'ink'), seatBadge(s, n.seatId), w('：' + (TELL[kind] || '').replace(/^自己/, '他'), 'ink'), obj);
   return h('div', { class: 'card focus infocard spread' },
     h('div', { class: 'ic-top' }, !s.oneDevice && cardTag(icon('send'), '已發到手機'), h('div', { class: 'ic-head' }, named(n.src)), say),
     h('div', { class: 'ic-foot' }, s.oneDevice

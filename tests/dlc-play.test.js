@@ -87,7 +87,7 @@ function dayVote(r, from, to, voters) {
   assert.strictEqual(tc.turn, true, '城鎮公告員自己的回合');
 }
 
-// 理髮師：亡骨魔把自己換給別人，爪牙鄰居的毒跟著亡骨魔這個角色走（和舞蛇人換到亡骨魔一樣），不會因為原座位沒了角色就解開
+// 理髮師：交換角色會結束原亡骨魔的持續效果，新亡骨魔不繼承舊死爪牙。
 {
   const r = mk(['oracle', 'cerenovus', 'dreamer', 'vigormortis', 'barber', 'clockmaker', 'seamstress'], 'snv');
   const vg = S(r, 'vigormortis'), cm = S(r, 'clockmaker'), dr = S(r, 'dreamer'), ce = S(r, 'cerenovus');
@@ -103,9 +103,10 @@ function dayVote(r, from, to, voters) {
   assert.strictEqual(toStep(r, 'barber').seatId, vg.id);
   pick(r, [vg.id, cm.id]);
   assert.deepStrictEqual([vg.role, cm.role], ['clockmaker', 'vigormortis']);
-  assert.ok(impaired(r, dr), '新的亡骨魔能力正常，毒還在');
+  assert.ok(!impaired(r, dr), '原亡骨魔失去角色，舊鄰居毒立即結束');
+  assert.ok(!ce.keep, '新亡骨魔不繼承舊死爪牙的保留能力');
   ok(applyStOp(r, { op: 'setDead', seatId: cm.id, dead: true }));
-  assert.ok(!impaired(r, dr), '新的亡骨魔死了才解毒');
+  assert.ok(!impaired(r, dr), '新亡骨魔死亡不影響已結束的舊毒');
 }
 
 // 瘋子以為自己是沙巴洛斯：他每晚在真惡魔之前醒，他選的人不能蓋掉真沙巴洛斯上一晚選的人（反芻的候選）
