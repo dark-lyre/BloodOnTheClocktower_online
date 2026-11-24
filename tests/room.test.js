@@ -15,6 +15,7 @@ const store = await import('../lib/store.js');
 const { applyStOp, applyPlayerAction, joinPlayer, claimSeat, WATCH, NEED_PASS, BAD_PASS } = await import('../lib/ops.js');
 const { viewFor } = await import('../lib/view.js');
 const { EGG } = await import('../public/js/score.js');
+const { SCRIPTS } = await import('../public/js/roles.js');
 
 const ok = r => assert.strictEqual(r, undefined, r);
 const st = (r, op, args = {}) => applyStOp(r, { op, ...args });
@@ -322,6 +323,115 @@ try {
   assert.strictEqual(droppedView.chatReset, true, '離開陣營時清除已呈現的聊天');
   assert.ok(!droppedView.chat.some(m => m.text === '新盟友看到'));
   assert.ok(!(await call(joinerSocket, 'pl:act', { act: 'chat', to: joinedView.chatGroups[0].id, text: '已退出' })).ok);
+
+  // 真實首夜能力使莽夫轉邪；瘋子的群聊只對正式告知的假爪牙開放。
+  const ruleHost = conn('10.0.10.1');
+  const createdRuleState = until(ruleHost, x => x.isSt && x.seats.length === 0);
+  const ruleRoom = await call(ruleHost, 'st:create');
+  assert.ok(ruleRoom.ok);
+  await createdRuleState;
+  const ruleRoles = ['imp', 'poisoner', 'goon', 'lunatic', 'chef', 'washerwoman', 'librarian'];
+  const ruleSocks = ruleRoles.map((_, i) => conn(`10.0.11.${i + 1}`));
+  const ruleViews = new Map(), ruleMessages = new Map();
+  for (const socket of [ruleHost, ...ruleSocks]) {
+    ruleMessages.set(socket, []);
+    socket.on('state', view => {
+      ruleViews.set(socket, view);
+      ruleMessages.get(socket).push(...view.chat);
+    });
+  }
+  const ruleOp = async (op, fields = {}) => {
+    const update = until(ruleHost, () => true);
+    const [reply, view] = await Promise.all([call(ruleHost, 'st:op', { op, ...fields }), update]);
+    assert.ok(reply.ok, reply.error);
+    return view;
+  };
+  await ruleOp('upload', { entries: [{ id: '_meta', name: '群聊身分邊界' }, ...SCRIPTS.tb.roles, 'goon', 'lunatic'] });
+  const ruleSeated = until(ruleHost, x => x.seats.length === ruleRoles.length);
+  for (const [i, socket] of ruleSocks.entries()) {
+    assert.ok((await call(socket, 'pl:join', { code: ruleRoom.code, inst: ruleRoom.inst, pid: `rule-group-${i}`, name: `rule-group-${i}` })).ok);
+  }
+  const { seats: ruleSeats } = await ruleSeated;
+  for (const [i, roleId] of ruleRoles.entries()) {
+    await ruleOp('setRole', { seatId: ruleSeats[i].id, roleId, ...(roleId === 'lunatic' && { fakeRole: 'imp' }) });
+  }
+  const [trueDemon, trueMinion, goonSocket, lunaticSocket, fakeMinion] = ruleSocks;
+  const route = (socket, label) => ruleViews.get(socket).chatGroups.find(g => g.label === label)?.id;
+  const ruleSay = async (socket, to, text) => {
+    const reply = await call(socket, 'pl:act', { act: 'chat', to, text });
+    assert.ok(reply.ok, reply.error);
+  };
+  // 公開消息作為有序屏障：收到它時，該連接一定已處理前面的私信及群聊增量。
+  const ruleBarrier = async text => {
+    const received = [ruleHost, ...ruleSocks].map(socket => until(socket, x => x.chat.some(m => m.text === text)));
+    await ruleOp('chat', { to: 'all', text });
+    await Promise.all(received);
+  };
+  const prepared = await ruleOp('next');
+  const draftStep = prepared.st.step;
+  assert.ok(draftStep.prepareLunatic);
+  assert.strictEqual(draftStep.lunaticDraft.minions.length, 1, '此局只有一名假爪牙，不預設兩人');
+  assert.deepStrictEqual(prepared.chatGroups, [], '瘋子信息未確認前不提前開群');
+  await ruleOp('lunaticInfo', {
+    ...draftStep.lunaticDraft, stepId: draftStep.id, minions: [ruleSeats[4].id],
+  });
+  await ruleBarrier('規則群聊已準備');
+  assert.ok(ruleMessages.get(lunaticSocket).some(m => m.src === 'demoninfo' && m.marks.some(mark => mark.t === 'minion' && mark.seatId === ruleSeats[4].id)), '群成員來自真正發出的假爪牙信息');
+  assert.deepStrictEqual(ruleViews.get(lunaticSocket).chatGroups.map(g => g.label), ['陣營群聊']);
+  assert.deepStrictEqual(ruleViews.get(fakeMinion).chatGroups.map(g => g.label), ['群聊'], '善良假爪牙的入口不暗示瘋子或真實陣營');
+  assert.deepStrictEqual(ruleViews.get(trueMinion).chatGroups.map(g => g.label), ['陣營群聊'], '未被指定的真爪牙不能加入瘋子群');
+  assert.deepStrictEqual(ruleViews.get(goonSocket).chatGroups, []);
+  assert.ok(route(ruleHost, '瘋子群聊'));
+  const evilRoute = route(trueDemon, '陣營群聊'), fakeRoute = route(fakeMinion, '群聊');
+  assert.ok(evilRoute && fakeRoute);
+  assert.ok(!(await call(trueMinion, 'pl:act', { act: 'chat', to: fakeRoute, text: '未指定爪牙猜假群路由' })).ok);
+  const fakeReceived = until(fakeMinion, x => x.chat.some(m => m.text === '假惡魔給指定假爪牙'));
+  await ruleSay(lunaticSocket, route(lunaticSocket, '陣營群聊'), '假惡魔給指定假爪牙');
+  assert.strictEqual((await fakeReceived).chat.find(m => m.text === '假惡魔給指定假爪牙').to, fakeRoute);
+  const lunaReceived = until(lunaticSocket, x => x.chat.some(m => m.text === '善良假爪牙回覆'));
+  await ruleSay(fakeMinion, fakeRoute, '善良假爪牙回覆');
+  assert.strictEqual((await lunaReceived).chat.find(m => m.text === '善良假爪牙回覆').to, route(lunaticSocket, '陣營群聊'));
+  await ruleSay(trueDemon, evilRoute, '莽夫轉邪前的真群消息');
+  await ruleBarrier('轉邪前群聊已收齊');
+  for (const socket of [trueDemon, trueMinion, goonSocket]) {
+    assert.ok(!ruleMessages.get(socket).some(m => ['假惡魔給指定假爪牙', '善良假爪牙回覆'].includes(m.text)), '假群內容不流向未指定的邪惡玩家或莽夫');
+  }
+
+  let ruleStep = ruleViews.get(ruleHost).st.step;
+  for (let i = 0; i < 6 && !(ruleStep?.roleId === 'poisoner' && ruleStep.status === 'choose'); i++) {
+    assert.strictEqual(ruleStep.status, 'ack', '首夜先完成爪牙、瘋子與惡魔信息');
+    ruleStep = (await ruleOp('ack')).st.step;
+  }
+  assert.strictEqual(ruleStep.roleId, 'poisoner');
+  assert.strictEqual(ruleStep.status, 'choose');
+  const beforeGoon = new Map(ruleSocks.map(socket => [socket, ruleMessages.get(socket).length]));
+  const evilGroupsBefore = [trueDemon, trueMinion].map(socket => ruleViews.get(socket).chatGroups);
+  const goonChanged = until(goonSocket, x => x.chat.some(m => m.src === 'goon' && m.to === ruleSeats[2].id && m.text === '你的陣營變為邪惡'));
+  const picked = await call(trueMinion, 'pl:act', { act: 'pick', ids: [ruleSeats[2].id] });
+  assert.ok(picked.ok, picked.error);
+  const changedView = await goonChanged;
+  const notice = changedView.chat.find(m => m.src === 'goon' && m.text === '你的陣營變為邪惡');
+  assert.strictEqual(notice.from, 'st');
+  assert.ok(notice.info);
+  assert.deepStrictEqual(notice.marks, [], '莽夫只得知新陣營，不得知是誰選中他');
+  assert.ok(!notice.f.some(token => token.s));
+  assert.deepStrictEqual(changedView.chatGroups, [], '莽夫真的由能力轉邪後仍不加入真邪惡群');
+  await ruleBarrier('莽夫能力轉邪已同步');
+  assert.strictEqual(ruleViews.get(ruleHost).seats.find(s => s.id === ruleSeats[2].id).align, 'evil');
+  for (const [i, socket] of [trueDemon, trueMinion].entries()) {
+    assert.deepStrictEqual(ruleViews.get(socket).chatGroups, evilGroupsBefore[i]);
+    assert.ok(!ruleMessages.get(socket).slice(beforeGoon.get(socket)).some(m => m.src === 'goon' || m.to === ruleSeats[2].id), '其他邪惡玩家不收到莽夫新陣營的私信');
+  }
+  await ruleSay(trueDemon, evilRoute, '莽夫轉邪後的真群消息');
+  assert.ok(!(await call(goonSocket, 'pl:act', { act: 'chat', to: evilRoute, text: '莽夫猜真群路由' })).ok);
+  await ruleBarrier('轉邪後群聊已收齊');
+  assert.ok(!ruleMessages.get(goonSocket).some(m => ['莽夫轉邪前的真群消息', '莽夫轉邪後的真群消息'].includes(m.text)), '莽夫不能收到轉邪前後的真群聊天');
+  const rejoinedGoon = until(goonSocket, x => x.chatReset && x.myId === ruleSeats[2].id);
+  assert.ok((await call(goonSocket, 'pl:join', { code: ruleRoom.code, inst: ruleRoom.inst, pid: 'rule-group-2', name: 'rule-group-2' })).ok);
+  const goonReplay = await rejoinedGoon;
+  assert.deepStrictEqual(goonReplay.chatGroups, []);
+  assert.ok(goonReplay.chat.some(m => m.src === 'goon' && m.text === '你的陣營變為邪惡'), '重連仍能查閱自己的陣營私信');
+  assert.ok(!goonReplay.chat.some(m => ['莽夫轉邪前的真群消息', '莽夫轉邪後的真群消息'].includes(m.text)), '重發歷史也不能補出真群消息');
   console.log('room server tests ok');
 } finally {
   socks.forEach(s => s.close());

@@ -2969,6 +2969,9 @@
  "確認提名": [
   "public/js/manual.js"
  ],
+ "群聊": [
+  "lib/chat.js"
+ ],
  "讓": [
   "public/js/stepcard.js"
  ],

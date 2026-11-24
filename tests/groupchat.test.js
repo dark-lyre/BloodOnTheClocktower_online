@@ -3,6 +3,8 @@ import { createRoom } from '../lib/store.js';
 import { applyPlayerAction, applyStOp, joinPlayer, WATCH } from '../lib/ops.js';
 import { viewFor } from '../lib/view.js';
 import { SCRIPTS } from '../public/js/roles.js';
+import { goonHit } from '../lib/night.js';
+import { tell } from '../lib/util.js';
 
 // 載入前端遮罩時，語系和音效模組會初始化瀏覽器事件。
 globalThis.addEventListener ??= () => {};
@@ -37,7 +39,16 @@ function setup(venue, devices) {
   return room;
 }
 
-function start(room) {
+function finishInfo(room) {
+  for (let i = 0; i < 8 && ['minioninfo', 'lunainfo', 'demoninfo'].includes(room.g.step?.roleId); i++) {
+    const step = room.g.step;
+    if (step.lunaticDraft) ok(st(room, 'lunaticInfo', { ...step.lunaticDraft, stepId: step.id }));
+    else ok(st(room, 'ack'));
+  }
+  assert(!['minioninfo', 'lunainfo', 'demoninfo'].includes(room.g.step?.roleId));
+}
+
+function start(room, minions = room.seats.slice(1, 3).map(s => s.id)) {
   ok(st(room, 'next'));
   // 有瘋子時先確認假信息，所有玩家的角色才會一起發送。
   const step = room.g.step;
@@ -48,8 +59,9 @@ function start(room) {
       assert.equal(view.myRole, null);
       assert.deepEqual(view.chatGroups, [], '身份發送前不從群聊入口洩露陣營');
     }
-    ok(st(room, 'lunaticInfo', { ...step.lunaticDraft, stepId: step.id }));
+    ok(st(room, 'lunaticInfo', { ...step.lunaticDraft, minions, stepId: step.id }));
   }
+  finishInfo(room);
 }
 
 for (const venue of ['online', 'offline']) {
@@ -61,7 +73,7 @@ for (const venue of ['online', 'offline']) {
 
   if (venue === 'offline') {
     const groups = host(room).chatGroups;
-    ok(st(room, 'undo'));
+    for (let i = 0; i < 8 && !room.g.lunaticPending; i++) ok(st(room, 'undo'));
     assert(room.g.lunaticPending, '撤銷退回瘋子假信息準備');
     assert.deepEqual(host(room).chatGroups, groups, '已發身份不能收回，撤銷也不關閉群聊');
     assert(routeFor(player(room, demon), '陣營群聊'));
@@ -71,7 +83,7 @@ for (const venue of ['online', 'offline']) {
 
   const hostEvil = routeFor(host(room), '邪惡群聊'), hostLuna = routeFor(host(room), '瘋子群聊');
   const evil = routeFor(player(room, demon), '陣營群聊');
-  const minionEvil = routeFor(player(room, minion), '陣營群聊'), minionLuna = routeFor(player(room, minion), '瘋子群聊');
+  const minionEvil = routeFor(player(room, minion), '陣營群聊'), minionLuna = routeFor(player(room, minion), '群聊');
   const luna = routeFor(player(room, lunatic), '陣營群聊');
   assert.deepEqual(player(room, lunatic).chatGroups.map(g => g.label), player(room, demon).chatGroups.map(g => g.label), '瘋子的群聊標題和真惡魔一樣');
   const visibleIds = [hostEvil, hostLuna, evil, minionEvil, minionLuna, luna];
@@ -123,18 +135,17 @@ for (const venue of ['online', 'offline']) {
   }
 
   ok(st(room, 'setAlign', { seatId: goon.id, align: 'evil' }));
-  const goonGroup = routeFor(player(room, goon), '陣營群聊');
-  assert(goonGroup);
-  assert.deepEqual(texts(player(room, goon), tags), [], '新盟友看不到加入前的談話');
+  assert.deepEqual(player(room, goon).chatGroups, [], '莽夫轉邪不獲得邪惡群聊');
+  assert.deepEqual(texts(player(room, goon), tags), [], '莽夫看不到邪惡群聊歷史');
   ok(say(room, demon, evil, '入群後的新消息'));
-  assert.deepEqual(texts(player(room, goon), ['入群後的新消息']), ['入群後的新消息']);
+  assert.deepEqual(texts(player(room, goon), ['入群後的新消息']), [], '莽夫轉邪也收不到新邪惡群聊');
+  assert.equal(typeof say(room, goon, evil, '莽夫猜測群聊'), 'string');
   ok(st(room, 'setAlign', { seatId: goon.id, align: 'good' }));
   assert.deepEqual(player(room, goon).chatGroups, []);
-  assert.deepEqual(texts(player(room, goon), ['入群後的新消息']), [], '離開陣營後不再發放群聊歷史');
-  assert.equal(typeof say(room, goon, goonGroup, '離開群的消息'), 'string');
+  assert.deepEqual(texts(player(room, goon), ['入群後的新消息']), []);
 
   ok(st(room, 'setRole', { seatId: sailor.id, roleId: 'assassin' }));
-  assert.deepEqual(player(room, sailor).chatGroups.map(g => g.label), ['陣營群聊', '瘋子群聊']);
+  assert.deepEqual(player(room, sailor).chatGroups.map(g => g.label), ['陣營群聊'], '新爪牙不會自動成為假爪牙');
   assert.deepEqual(texts(player(room, sailor), tags), [], '新爪牙不補發兩個群的舊聊天');
   ok(st(room, 'setRole', { seatId: lunatic.id, roleId: 'fool' }));
   assert.deepEqual(player(room, lunatic).chatGroups, [], '沒有瘋子後關閉其群聊');
@@ -147,6 +158,93 @@ for (const venue of ['online', 'offline']) {
   assert.notEqual(routeFor(player(room, demon), '陣營群聊'), evil, '新局重新分配群聊路由');
   assert.deepEqual(texts(host(room), tags), [], '上一局群聊清空');
   assert.equal(typeof say(room, demon, evil, '上一局的群'), 'string');
+}
+
+// 假爪牙可以是善良玩家：收發、歷史和存檔均按已發出的假信息隔離。
+for (const venue of ['online', 'offline']) {
+  const room = setup(venue, 'many');
+  const [demon, minion, otherMinion, lunatic, marionette, goon, sailor, chambermaid] = room.seats;
+  start(room, [sailor.id, chambermaid.id]);
+  const hostLuna = routeFor(host(room), '瘋子群聊');
+  const luna = routeFor(player(room, lunatic), '陣營群聊');
+  assert(hostLuna && luna);
+  for (const member of [sailor, chambermaid]) {
+    assert.deepEqual(player(room, member).chatGroups.map(g => g.label), ['群聊'], '假爪牙只看到中性群名');
+  }
+  for (const member of [demon, minion, otherMinion]) {
+    assert.deepEqual(player(room, member).chatGroups.map(g => g.label), ['陣營群聊'], '沒被指定的真邪惡不能進假群');
+  }
+  for (const outsider of [marionette, goon]) assert.deepEqual(player(room, outsider).chatGroups, []);
+
+  const markers = ['假惡魔發言', '善良假爪牙回覆', '說書人寄假群', '真邪惡的私聊'];
+  ok(say(room, lunatic, luna, markers[0]));
+  ok(say(room, sailor, routeFor(player(room, sailor), '群聊'), markers[1]));
+  ok(st(room, 'chat', { to: hostLuna, text: markers[2] }));
+  ok(say(room, demon, routeFor(player(room, demon), '陣營群聊'), markers[3]));
+  for (const member of [lunatic, sailor, chambermaid]) assert.deepEqual(texts(player(room, member), markers), markers.slice(0, 3));
+  for (const outsider of [demon, minion, otherMinion]) {
+    assert.deepEqual(texts(player(room, outsider), markers), markers.slice(3));
+    assert.equal(typeof say(room, outsider, luna, '未指定爪牙嘗試入群'), 'string');
+  }
+
+  const longGame = JSON.parse(JSON.stringify(room));
+  assert.equal(longGame.g.lunaticInfo.sent, true, '只在實際發送後保存正式群聊名單');
+  for (let i = 0; i < 601; i++) tell(longGame, lunatic.id, `後續私密信息${i}`, [], { src: 'chambermaid' });
+  assert(!longGame.chat.some(m => m.to === lunatic.id && m.src === 'demoninfo'), '確實超過聊天信息上限並裁掉首夜消息');
+  assert(routeFor(player(longGame, lunatic), '陣營群聊'));
+  for (const member of [sailor, chambermaid]) assert(routeFor(player(longGame, member), '群聊'), '長局仍使用已發送的固定名單');
+  for (const outsider of [demon, minion, otherMinion]) assert(!routeFor(player(longGame, outsider), '群聊'));
+
+  // 陣營、死亡不改變已經告訴瘋子的同伴；後來的草稿也不能替換已發信息。
+  ok(st(room, 'setAlign', { seatId: chambermaid.id, align: 'evil' }));
+  sailor.dead = true;
+  room.g.lunaticInfo = { seatId: lunatic.id, minions: [minion.id, otherMinion.id] };
+  assert(routeFor(player(room, chambermaid), '群聊'));
+  assert(routeFor(player(room, sailor), '群聊'));
+  assert(!routeFor(player(room, minion), '群聊'));
+  const restored = JSON.parse(JSON.stringify(room));
+  for (const member of [lunatic, sailor, chambermaid]) {
+    assert.deepEqual(texts(player(restored, member), markers), markers.slice(0, 3), '讀取存檔後仍按已發名單收取歷史');
+  }
+  const missing = JSON.parse(JSON.stringify(room));
+  missing.chat = missing.chat.filter(m => !(m.to === lunatic.id && m.src === 'demoninfo'));
+  assert.deepEqual(player(missing, lunatic).chatGroups, [], '缺少已發名單時不猜測真爪牙或使用新草稿');
+}
+
+// 被指定為假爪牙的莽夫可以留在該群，但其能力轉邪不增加真邪惡群或通知隊友。
+{
+  const room = setup('online', 'many');
+  const [demon, minion, otherMinion, lunatic, , goon, sailor] = room.seats;
+  start(room, [goon.id, sailor.id]);
+  const before = player(room, goon).chatGroups;
+  assert.deepEqual(before.map(g => g.label), ['群聊']);
+  const seq = room.chatSeq;
+  goonHit(room, demon, [goon]);
+  assert.equal(goon.align, 'evil');
+  assert.deepEqual(player(room, goon).chatGroups, before, '莽夫只有原先被指定的假爪牙群');
+  assert(room.g.woke.includes(goon.id));
+  const told = player(room, goon).chat.filter(m => m.seq > seq && m.src === 'goon');
+  assert.equal(told.length, 1);
+  assert.match(told[0].text, /你的陣營變為邪惡/);
+  assert.deepEqual(told[0].marks, [], '只通知新陣營，不提供選中者或同伴');
+  for (const seat of [demon, minion, otherMinion, lunatic, sailor]) {
+    assert(!player(room, seat).chat.some(m => m.seq > seq && m.src === 'goon'), '不把陣營通知寄給其他玩家');
+  }
+  const groupId = routeFor(player(room, demon), '陣營群聊');
+  ok(say(room, demon, groupId, '莽夫不能收到的邪惡消息'));
+  assert(!player(room, goon).chat.some(m => m.text === '莽夫不能收到的邪惡消息'));
+  assert.equal(typeof say(room, goon, groupId, '不能向真邪惡群發言'), 'string');
+
+  // 下一晚由善良玩家選中，仍只通知莽夫，指定群聊不隨陣營進退。
+  room.g.night++;
+  const nextSeq = room.chatSeq;
+  goonHit(room, sailor, [goon]);
+  assert.equal(goon.align, 'good');
+  assert.deepEqual(player(room, goon).chatGroups, before);
+  assert.match(player(room, goon).chat.find(m => m.seq > nextSeq && m.src === 'goon').text, /你的陣營變為善良/);
+  for (const seat of [demon, minion, otherMinion, lunatic, sailor]) {
+    assert(!player(room, seat).chat.some(m => m.seq > nextSeq && m.src === 'goon'));
+  }
 }
 
 const single = setup('offline', 'one');
